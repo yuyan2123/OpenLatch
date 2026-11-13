@@ -87,6 +87,60 @@ void limits_and_driver_failure() {
   CHECK(failed.on() == Result::Fault); CHECK(!failed.relay.high);
   failed.relay.failStart = false; CHECK(failed.on() == Result::Fault);
 }
+void infrared_and_homekit_coexistence() {
+  Rig r;
+  CHECK(r.controller.infrared(r.now(), true) == Result::BootGuard);
+  r.advance(3000);
+  CHECK(r.on() == Result::Offline);
+  CHECK(r.controller.infrared(r.now(), true) == Result::Accepted);
+  r.network(false, false);  // Offline synchronization must preserve a local pulse.
+  r.advance(100);
+  CHECK(r.relay.high);
+  r.network(true, true);
+  CHECK(r.on() == Result::Busy);
+  CHECK(r.controller.infrared(r.now(), true) == Result::Busy);
+  r.advance(300);
+  CHECK(!r.relay.high);
+  CHECK(r.on() == Result::Cooldown);
+  CHECK(r.controller.infrared(r.now(), true) == Result::Cooldown);
+  r.advance(2000);
+  CHECK(r.on() == Result::Accepted);
+  CHECK(r.controller.infrared(r.now(), true) == Result::Busy);
+  r.network(false, false);  // HomeKit pulses still stop immediately on loss.
+  CHECK(!r.relay.high);
+  CHECK(r.controller.infrared(r.now(), true) == Result::Cooldown);
+  r.advance(2000);
+  CHECK(r.controller.infrared(r.now(), true) == Result::Accepted);
+  r.network(true, true);
+  CHECK(r.controller.homekit(r.now(), false, false) == Result::Unauthorized);
+  CHECK(r.relay.high);
+  CHECK(r.controller.homekit(r.now(), true, false) == Result::Off);
+  CHECK(!r.relay.high);
+  r.advance(2000);
+  r.controller.inhibit(r.now(), true);
+  CHECK(r.on() == Result::Inhibited);
+  CHECK(r.controller.infrared(r.now(), true) == Result::Inhibited);
+  r.controller.inhibit(r.now(), false);
+  CHECK(r.controller.infrared(r.now(), true) == Result::Accepted);
+  r.controller.inhibit(r.now(), true);  // Enrollment interrupts either source.
+  CHECK(!r.relay.high);
+  r.controller.inhibit(r.now(), false);
+  CHECK(r.on() == Result::Cooldown);
+  r.advance(2000);
+  CHECK(r.on() == Result::Accepted);
+  r.controller.inhibit(r.now(), true);
+  CHECK(!r.relay.high);
+  r.controller.inhibit(r.now(), false);
+  r.advance(2000);
+  CHECK(r.controller.infrared(r.now()) == Result::IrDisabled);
+  CHECK(!r.relay.high);
+  CHECK(r.controller.infrared(r.now(), true) == Result::Accepted);
+  r.advance(10000, false);
+  CHECK(!r.relay.high);
+  CHECK(r.relay.trace.back().at - r.relay.trace[r.relay.trace.size() - 2].at == 400);
+  r.controller.trip(r.now());
+  CHECK(r.controller.infrared(r.now(), true) == Result::Fault);
+}
 void millis_wraparound() {
   Rig r;
   r.advance(0xffffffffULL - 1000); r.reboot();
@@ -130,5 +184,6 @@ int main() {
   boot_and_auth(); pulse_and_duplicates(); independent_deadline();
   disconnection_and_no_queue(); reboot_and_fault(); off_and_ir();
   limits_and_driver_failure(); millis_wraparound(); randomized_invariants();
-  std::cout << "PASS: 9 scenario groups, including 20,000 randomized events.\n";
+  infrared_and_homekit_coexistence();
+  std::cout << "PASS: 10 controller scenario groups, including 20,000 randomized events.\n";
 }

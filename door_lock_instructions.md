@@ -6,6 +6,26 @@
 **Status:** Design and procurement plan; **not an authorization to connect to the existing electric lock**  
 **Language:** English  
 
+> **Firmware 1.2.0 update — 13 November 2026:** Configuration now uses an
+> authenticated on-device website for Wi-Fi and IR. Normal LAN setup closes ten
+> minutes after boot. Offline AP recovery stays available until Wi-Fi connects,
+> including when the deadline has passed, as requested by the user. No Wi-Fi
+> configuration starts AP immediately; failed connection starts AP after 30 s.
+> This replaces USB-only enrollment and disabled web/AP provisioning statements
+> below. HomeKit uses TCP 1201 and setup uses TCP 80. There is no HTTP unlock API.
+> See [current web setup](docs/web_setup.md).
+
+> **Firmware scope update — 13 November 2026:** The user has requested IR learning
+> and release. Firmware 1.1.0 now supports one button enrolled by two separate
+> presses after the local USB `ir learn` command. The key persists in NVS and can
+> release offline. HomeKit and IR share pulse/cooldown limits; Wi-Fi loss stops
+> HomeKit-originated pulses only. This supersedes the diagnostic-only/default
+> IR-disable and unconditional Wi-Fi-loss behavior described below. A fresh
+> device still has no enrolled key. Keep the receiver in a protected interior
+> location; consumer IR codes remain replayable. See
+> [current IR setup and limitations](docs/infrared_setup.md). Electrical
+> commissioning requirements remain applicable.
+
 > **Important distinction:** This project operates the *existing door-release button*. It is not a replacement for the electric lock, and it does not measure whether the door is closed or the bolt is locked. The previously discussed `PT` door-position input, optocouplers, and extra door sensors are **excluded from the current scope**.
 >
 > **Commissioning gate:** The electrical behavior of the existing intercom's release-button circuit and the exact 3.3 V trigger threshold of the particular relay board have **not** been verified. The controller must first pass isolated bench tests. Connection to the building's release circuit must be approved from measurements and the actual installed wiring by a qualified installer.

@@ -8,17 +8,18 @@ constexpr uint32_t kCooldownMs = 2000;
 constexpr uint32_t kBootGuardMs = 3000;
 constexpr int kRelayPin = 4;
 constexpr int kIrPin = 3;
+enum class Source { HomeKit, Infrared };
 
 // Implementations must shut down independently of tick()/HomeSpan polling.
 struct Relay {
   virtual ~Relay() = default;
-  virtual bool start(uint32_t durationMs) = 0;
+  virtual bool start(uint32_t durationMs, Source source = Source::HomeKit) = 0;
   virtual void stop() = 0;
   virtual bool active() const = 0;
 };
 
 enum class Result { Accepted, Off, Unauthorized, Offline, BootGuard,
-                    Busy, Cooldown, IrDisabled, Fault };
+                    Busy, Cooldown, IrDisabled, Inhibited, Fault };
 inline const char* name(Result r) {
   switch (r) {
     case Result::Accepted: return "accepted";
@@ -29,6 +30,7 @@ inline const char* name(Result r) {
     case Result::Busy: return "busy";
     case Result::Cooldown: return "cooldown";
     case Result::IrDisabled: return "ir_disabled";
+    case Result::Inhibited: return "inhibited";
     case Result::Fault: return "fault";
   }
   return "invalid";
@@ -42,13 +44,14 @@ class Controller {
   void boot(uint32_t now) {
     relay_.stop();
     bootAt_ = now;
-    busy_ = network_ = session_ = cooling_ = false;
+    busy_ = network_ = session_ = cooling_ = inhibited_ = false;
+    source_ = Source::HomeKit;
     fault_ = pulseMs_ == 0 || pulseMs_ > kMaxPulseMs;
   }
   void connectivity(uint32_t now, bool network, bool verifiedSession) {
     network_ = network;
     session_ = verifiedSession;
-    if (!network_ || !session_) finish(now);
+    if (busy_ && source_ == Source::HomeKit && (!network_ || !session_)) finish(now);
   }
   void tick(uint32_t now) {
     if (busy_ && (!relay_.active() || elapsed(now, startedAt_) >= pulseMs_))
@@ -59,26 +62,39 @@ class Controller {
     tick(now);
     if (!verifiedWrite) return Result::Unauthorized;
     if (!on) { finish(now); return Result::Off; }
-    if (fault_) return Result::Fault;
     if (!network_ || !session_) return Result::Offline;
-    if (elapsed(now, bootAt_) < kBootGuardMs) return Result::BootGuard;
-    if (busy_) return Result::Busy;
-    if (cooling_) return Result::Cooldown;
-    if (!relay_.start(pulseMs_)) {
-      trip(now);
-      return Result::Fault;
-    }
-    startedAt_ = now;
-    busy_ = true;
-    return Result::Accepted;
+    return release(now, Source::HomeKit);
   }
-  // Intentionally no configuration switch that enables replayable IR unlock.
-  Result infrared(uint32_t now) { tick(now); return Result::IrDisabled; }
+  // Only the learned-key matcher may supply matched=true.
+  Result infrared(uint32_t now, bool matched = false) {
+    tick(now);
+    if (!matched) return Result::IrDisabled;
+    return release(now, Source::Infrared);
+  }
+  void inhibit(uint32_t now, bool value) {
+    if (value && !inhibited_) finish(now);
+    inhibited_ = value;
+  }
   void trip(uint32_t now) { finish(now); relay_.stop(); fault_ = true; }
   bool actionOn() const { return busy_ && relay_.active(); }
   bool faulted() const { return fault_; }
 
  private:
+  Result release(uint32_t now, Source source) {
+    if (fault_) return Result::Fault;
+    if (inhibited_) return Result::Inhibited;
+    if (elapsed(now, bootAt_) < kBootGuardMs) return Result::BootGuard;
+    if (busy_) return Result::Busy;
+    if (cooling_) return Result::Cooldown;
+    if (!relay_.start(pulseMs_, source)) {
+      trip(now);
+      return Result::Fault;
+    }
+    startedAt_ = now;
+    source_ = source;
+    busy_ = true;
+    return Result::Accepted;
+  }
   static uint32_t elapsed(uint32_t now, uint32_t since) { return now - since; }
   void finish(uint32_t now) {
     relay_.stop();
@@ -88,6 +104,7 @@ class Controller {
   Relay& relay_;
   uint32_t pulseMs_, bootAt_ = 0, startedAt_ = 0, stoppedAt_ = 0;
   bool busy_ = false, network_ = false, session_ = false;
-  bool cooling_ = false, fault_ = false;
+  bool cooling_ = false, fault_ = false, inhibited_ = false;
+  Source source_ = Source::HomeKit;
 };
 }  // namespace door

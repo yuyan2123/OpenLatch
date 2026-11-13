@@ -1,6 +1,6 @@
 # ESP32-C3 門禁按鈕控制器｜接線與操作說明書
 
-> 版本 1.0 · 2026-11-12 · 目前完成虛擬測試，未連接硬體。
+> Version 1.2 · 2026-11-13 · Software verified; hardware not connected.
 
 
 ## 01　ESP32-C3 門禁接線說明
@@ -18,8 +18,8 @@
 | 輸入 | 控制器動作 | 能確認的事情 |
 | --- | --- | --- |
 | Apple Home 的 ON 指令 | GPIO4 輸出約 400 ms，再自動 OFF | 程式下達釋放命令；不能確認門已打開 |
-| 紅外線遙控訊號 | GPIO3 接收、解碼並記錄診斷 | 目前不允許 IR 觸發開門 |
-| 斷線、重啟、錯誤 | 停止輸出；不恢復先前動作 | 實際上電與掉電行為仍須實測 |
+| Infrared remote | GPIO3 receives the learned button | 400 ms pulse; also works offline |
+| Disconnect / reboot / fault | Disconnect stops HomeKit pulses; reboot/fault stops all | IR pulses are independent of Wi-Fi |
 
 
 > **尚不可直接接：原對講機與電鎖線路**
@@ -29,7 +29,7 @@
 
 已選零件之外，準備合格穩壓 USB 5 V／至少 1 A 電源、USB-C 線、10 kΩ／0.25 W 電阻一顆、絕緣導線、適合的端子／焊接排針與絕緣外殼。照片中的板若尚未焊排針，需先完成可靠焊接；不可只把線塞入焊孔。
 
-閱讀順序：第 2 頁辨識零件 → 第 3～4 頁接控制器 → 第 5 頁測試 → 第 6 頁設定韌體與 Apple Home → 第 7 頁由安裝人員確認對講機 → 第 8 頁排錯與紀錄。
+Read: 2 - parts; 3-4 - wiring; 5 - tests; 6 - firmware/HomeKit; 7 - intercom; 8 - troubleshooting; 9 - infrared; 10 - phone setup.
 
 
 ## 02　先認絲印，再認方向
@@ -103,8 +103,8 @@ USB-C 只接一個電源。若 5V 焊點無法供應繼電器，應先重新確�
 | 2｜只上控制器電源 | 由適任人員用電表 DC 電壓檔量 5V、3V3 對控制器 GND。避免表筆碰短相鄰腳。 | 供電正常；GPIO4 靜止 LOW，繼電器保持釋放。 |
 | 3｜檢查未帶電的乾接點 | 確認接點完全沒有外接電源或對講機線，再以導通檔量 COM–NO／COM–NC。 | 未動作：COM–NO 不導通，COM–NC 導通。 |
 | 4｜短脈衝 | 先完成下一頁設定，從 Apple Home 發出 ON。用合適的量測工具確認 GPIO4 波形／接點動作。 | 單次約 400 ms 後釋放；不能只憑聽到「喀」判定通過。 |
-| 5｜異常情境 | 測試連按、Wi-Fi 中斷、HomeKit 中斷、重啟、拔電與重新上電。 | 不延長脈衝；斷線停止；重新上電不誤吸合、不重播動作。 |
-| 6｜IR 診斷 | 用遙控器對準接收板，查看 115200 串列日誌；先完成有效韌體設定。 | 支援的訊號可見 ir_diagnostic；繼電器不動作。 |
+| 5 | Fault tests | Test repeated presses, Wi-Fi/HomeKit loss, reboot and power cycling. | No extended pulse; network loss stops HomeKit only; no replay after reboot. |
+| 6 | IR setup | Use Learn button on the setup website; press the same button twice with a 500 ms release. See pages 9-10. | Learning never releases; a later press gives one 400 ms pulse. |
 
 一般電表的更新速度可能漏掉 400 ms 脈衝；量測脈寬可使用適合 3.3 V 邏輯的示波器或邏輯分析儀。電表導通檔只能用在已確認未帶電、隔離的接點，不可拿去量正在通電的原對講機線路。
 
@@ -125,14 +125,14 @@ python tools/simulate.py demo
 python tools/simulate.py interactive
 ```
 
-模擬已通過 9 組情境、20,000 次隨機事件及計時器驅動測試。模擬中的 session on 只是測試輸入，不是實際 HomeKit 配對。
+Controller, IR learning/storage and timer tests include 20,000 random events. session on is a simulation input, not real HomeKit authentication.
 
 B. 有硬體時才進行：私密設定與燒錄
 
-1. 將 firmware/DoorRelease/secrets.example.h 複製為同資料夾的 secrets.h。填入 2.4 GHz Wi-Fi SSID、密碼，以及自己保管的八位數 HomeKit 配對碼，勿使用預設或連號碼。
-2. 沒有有效 secrets.h 時，韌體保持 OFF，不啟動 Wi-Fi、HomeSpan 或 IR 診斷。
-3. 用 Arduino IDE 開啟 DoorRelease.ino；使用 Arduino-ESP32 3.3.0、HomeSpan 2.1.8、IRremote 4.4.1。選 ESP32C3 Dev Module、4 MB flash、Huge APP（3 MB）、USB CDC On Boot 啟用。
-4. 依實際 USB 連接選擇序列埠後上傳；必要時依板子的 BOOT／RST 操作進入下載模式。上傳過程繼電器所有接點仍保持空接。
+1. No secrets.h is required. Wi-Fi, the access password and IR can be configured from your phone after upload (page 10). A pairing code is generated and saved automatically.
+2. Optional secrets.h seeds factory defaults only; saved web settings take precedence.
+3. Open DoorRelease.ino in Arduino IDE. Use Arduino-ESP32 3.3.0, HomeSpan 2.1.8, IRremote 4.4.1; ESP32C3 Dev Module, 4 MB flash, Huge APP (3 MB), USB CDC On Boot enabled.
+4. Select the actual USB port and upload. Use BOOT/RST if required. Keep all relay contacts disconnected.
 
 專案的 tools/setup.ps1 安裝工具；tools/build-firmware.ps1 只編譯，不會上傳。build/configured-check/ 內的資料是虛構編譯測試值，不可拿來當部署設定。
 
@@ -143,7 +143,7 @@ C. Apple Home 與 HomePod
 3. 在接點空接狀態測試 ON → 約 400 ms → OFF。啟動保護為 3 秒，停止後冷卻至少 2 秒。
 4. 要測試外出控制，先確認家庭中樞正常，再關閉手機 Wi-Fi，使用行動網路測試。不要設定路由器連接埠轉送。
 
-目前程式關閉 HomeSpan 串列指令及 AP 佈建；串列僅供查看程式診斷。配對成功不代表繼電器或原門鎖已通過電氣驗證。
+Use the setup website for Wi-Fi and IR. Optional USB IR commands remain available. Pairing does not verify electrical compatibility.
 
 
 ## 07　接入原按鈕：須先確認 A／B
@@ -172,9 +172,9 @@ C. Apple Home 與 HomePod
 
 | 現象 | 處理 |
 | --- | --- |
-| 繼電器不動 | 先確認有效 secrets.h、Wi-Fi／配對、啟動保護與冷卻時間，再檢查 5 V 供電、H 跳帽及 3.3 V 觸發相容性。 |
+| Relay does not move | Check boot guard, cooldown, power and trigger compatibility. For HomeKit check credentials/pairing; for IR use ir status. |
 | 繼電器動作時 ESP32 重啟 | 檢查供電能力、USB 線、接線與干擾。不要靠延長脈衝處理。 |
-| IR 有接收，卻不開門 | 這是目前設定的正常行為：IR 只供診斷。 |
+| IR received; no release | Use ir status. Check enrollment, supported protocol, 500 ms release, boot guard and cooldown. See page 9. |
 | 家庭 App 顯示 OFF | 只代表釋放動作已結束，不表示門已關閉或上鎖。 |
 | 開機誤吸合／原按鈕異常 | 立即停止；由適任人員隔離外加控制器並恢復原電路，重新檢查。 |
 
@@ -196,3 +196,68 @@ C. Apple Home 與 HomePod
 - [Espressif：ESP32-C3 Datasheet](https://documentation.espressif.com/esp32-c3_datasheet_en.html)
 - [Joy-IT：KY-022 參考規格（3.3–5 V／38 kHz；不證明此實板腳位）](https://sensorkit.joy-it.net/en/sensors/ky-022)
 - [Apache NuttX：SuperMini 板型差異與腳位參考](https://nuttx.incubator.apache.org/docs/latest/platforms/risc-v/esp32c3/boards/esp32c3-supermini/index.html)
+
+## 09　Infrared learning and release
+
+Phone setup on page 10; HomeKit and infrared can operate together.
+
+Learn one unlock button
+
+1. Open the setup website from your phone on local Wi-Fi or the setup AP (page 10). Keep relay contacts disconnected during setup.
+2. Select Learn button. Release all remote buttons for at least 500 ms, then press the intended button once.
+3. After the first-press message, release for at least 500 ms and press the same button again within 30 seconds.
+4. Button learned and saved confirms storage. Learning never opens the door. Release and press again to request a 400 ms pulse.
+
+Optional USB commands (115200 baud)
+
+```text
+ir help
+ir status
+ir learn
+ir cancel
+ir forget
+```
+
+The website also offers Cancel learning and Forget button. A failed erase may leave a persistent key; retry until successful. Closing the setup window cancels unfinished learning and retains the previous button.
+
+Shared control and limits
+
+HomeKit and IR share a 3 s boot guard, 400 ms pulse and 2 s cooldown. Requests during a pulse return busy; during cooldown they return cooldown. Requests never queue or extend a pulse. Authenticated HomeKit OFF stops either source. Wi-Fi loss stops only HomeKit pulses; learned IR works offline. Learning inhibits both sources.
+
+Supported: NEC/NEC2, Sony, Samsung/SamsungLG, RC5, RC6 and JVC. Held buttons, repeats, parity errors, overflow and unsupported decoders are rejected. A new press requires 500 ms without decoded activity. The key persists in NVS; an unfinished learning session does not.
+
+
+> **Placement and verification**
+> IR codes are copyable and replayable. Place the receiver in a protected interior location. Software tests and compilation do not replace hardware or Apple Home verification. Full instructions: docs/infrared_setup.md.
+
+
+## 10　Wi-Fi and setup access
+
+After the first firmware upload, routine setup needs only your phone.
+
+First connection
+
+1. With no saved Wi-Fi, join DoorRelease-XXXXXX on your phone. Initial AP password: DoorSetup-2026.
+2. Open http://192.168.4.1/ in a regular browser. Username: admin. Initial login password: DoorSetup-2026. Private factory overrides take precedence.
+3. Enter the 2.4 GHz Wi-Fi name and password. Optionally change New setup password; it becomes both the AP and web login password.
+4. Select Save and restart. After reconnecting your phone to home Wi-Fi, open http://door-release-xxxxxx.local/ (the AP suffix in lowercase), or use the device IP from your router.
+5. The page provides IR learning and shows the HomeKit pairing code. Wi-Fi changes retain paired controllers and the IR button.
+
+When setup stays available
+
+| Connection state | Setup behavior |
+| --- | --- |
+| No saved network | AP and website start immediately. |
+| Saved network unavailable | After 30 s start AP; retry the network every 30 s. |
+| Online before 10 minutes | AP is off; website is available on the LAN. |
+| Online after 10 minutes | Website is off; HomeKit and learned IR still work. |
+| Offline beyond 10 minutes | Keep AP and website available until Wi-Fi connects. |
+| Later connection loss | Reopen AP after 30 s, even beyond the normal deadline. |
+
+A connection means Wi-Fi with an IP address; internet access is not required. If Wi-Fi connects after the deadline, AP and website close immediately. Restart to reopen the normal setup window. Restart does not reset your saved password.
+
+Save and recovery
+
+Wi-Fi and access settings are validated, committed to NVS and verified before restart. No current password is returned by the page. Leave Wi-Fi password empty only to retain it for the unchanged SSID; explicitly select the checkbox for an open network. A blank setup password retains the existing one.
+
+Setup uses TCP 80; HomeKit uses TCP 1201 advertised through Bonjour. No port is entered in the Home app. Real AP, mDNS and iPhone/HomePod behavior still need hardware verification. Detailed instructions: docs/web_setup.md.

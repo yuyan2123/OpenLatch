@@ -19,13 +19,14 @@ class TimedRelay final : public door::Relay {
     ready_ = esp_timer_create(&args, &timer_) == ESP_OK;
     return ready_;
   }
-  bool start(uint32_t ms) override {
+  bool start(uint32_t ms, door::Source source = door::Source::HomeKit) override {
     if (!ready_ || ms == 0 || ms > door::kMaxPulseMs) return false;
     // Main loop is the only caller of start. stop() from a network callback
     // can revoke permission before/after timer arming, including this window.
     esp_timer_stop(timer_);
     portENTER_CRITICAL(&mux_);
-    if (!permitted_) { portEXIT_CRITICAL(&mux_); return false; }
+    if (!permitted(source)) { portEXIT_CRITICAL(&mux_); return false; }
+    source_ = source;
     active_ = true;
     portEXIT_CRITICAL(&mux_);
     // Arm BEFORE HIGH. If scheduling delays us until after timeout, stop()
@@ -35,7 +36,7 @@ class TimedRelay final : public door::Relay {
       return false;
     }
     portENTER_CRITICAL(&mux_);
-    const bool armed = active_ && permitted_;
+    const bool armed = active_ && permitted(source);
     if (armed) gpio_set_level(pin_, 1);
     portEXIT_CRITICAL(&mux_);
     return armed;
@@ -51,7 +52,17 @@ class TimedRelay final : public door::Relay {
   void permit(bool value) {
     portENTER_CRITICAL(&mux_);
     permitted_ = value;
-    if (!value) { gpio_set_level(pin_, 0); active_ = false; }
+    if (!value && source_ == door::Source::HomeKit) {
+      gpio_set_level(pin_, 0); active_ = false;
+    }
+    portEXIT_CRITICAL(&mux_);
+  }
+  void permitInfrared(bool value) {
+    portENTER_CRITICAL(&mux_);
+    infraredPermitted_ = value;
+    if (!value && source_ == door::Source::Infrared) {
+      gpio_set_level(pin_, 0); active_ = false;
+    }
     portEXIT_CRITICAL(&mux_);
   }
   bool active() const override {
@@ -61,9 +72,14 @@ class TimedRelay final : public door::Relay {
     return value;
   }
  private:
+  // Called only while holding mux_. Network revocation cannot grant local access.
+  bool permitted(door::Source source) const {
+    return source == door::Source::Infrared ? infraredPermitted_ : permitted_;
+  }
   static void timeout(void* arg) { static_cast<TimedRelay*>(arg)->stop(); }
   static constexpr gpio_num_t pin_ = static_cast<gpio_num_t>(door::kRelayPin);
   mutable portMUX_TYPE mux_ = portMUX_INITIALIZER_UNLOCKED;
   esp_timer_handle_t timer_ = nullptr;
-  bool ready_ = false, permitted_ = false, active_ = false;
+  bool ready_ = false, permitted_ = false, infraredPermitted_ = false, active_ = false;
+  door::Source source_ = door::Source::HomeKit;
 };

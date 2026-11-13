@@ -35,9 +35,32 @@ int main() {
   CHECK(fakeHighWrites == writes);
   fakeAfterArm = nullptr;
 
+  CHECK(!relay.start(400, door::Source::Infrared));
+  relay.permitInfrared(true);
+  CHECK(relay.start(400, door::Source::Infrared));
+  relay.permit(false);  // Local pulses do not depend on network permission.
+  CHECK(fakeGpio == 1); CHECK(relay.active());
+  fakeExpire(); CHECK(fakeGpio == 0);
+  CHECK(!relay.start(400));  // Local permission cannot authorize HomeKit.
+  CHECK(relay.start(400, door::Source::Infrared));
+  relay.permitInfrared(false); CHECK(fakeGpio == 0);
+  CHECK(!relay.start(400, door::Source::Infrared));
+  relay.permit(true);
+  CHECK(relay.start(400));
+  relay.permitInfrared(false); CHECK(fakeGpio == 1);
+  relay.stop(); CHECK(fakeGpio == 0);
+  relay.permitInfrared(true);
+  fakeAfterArm = []() { current->permitInfrared(false); };
+  CHECK(!relay.start(400, door::Source::Infrared)); CHECK(fakeGpio == 0);
+  relay.permitInfrared(true);
+  fakeAfterArm = []() { current->permit(false); };
+  CHECK(relay.start(400, door::Source::Infrared)); CHECK(fakeGpio == 1);
+  fakeExpire(); CHECK(fakeGpio == 0);
+  fakeAfterArm = nullptr;
+
   TimedRelay broken;
   fakeCreateFails = true;
   CHECK(!broken.begin()); broken.permit(true);
   CHECK(!broken.start(400)); CHECK(fakeGpio == 0);
-  std::cout << "PASS: actual TimedRelay adapter, timer failure and callback interleavings.\n";
+  std::cout << "PASS: actual TimedRelay adapter, source permissions, timer failure and callback interleavings.\n";
 }

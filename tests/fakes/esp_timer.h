@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-constexpr int ESP_OK = 0;
+#include "esp_err.h"
 struct esp_timer_create_args_t {
   void (*callback)(void*) = nullptr;
   void* arg = nullptr;

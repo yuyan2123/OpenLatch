@@ -11,7 +11,7 @@ class VirtualRelay : public door::Relay {
   uint64_t now = 0, deadline = 0;
   bool high = false, failStart = false;
   std::vector<Transition> trace;
-  bool start(uint32_t ms) override {
+  bool start(uint32_t ms, door::Source = door::Source::HomeKit) override {
     if (failStart || !ms || ms > door::kMaxPulseMs) return false;
     high = true;
     deadline = now + ms;

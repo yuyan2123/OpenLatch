@@ -1,6 +1,10 @@
 #pragma once
-// Copy to secrets.h locally. Never commit the populated file.
+// Optional factory defaults. Runtime settings in NVS take precedence.
+// Wi-Fi and infrared can be configured from the setup web page without this file.
 #define DOOR_WIFI_SSID ""
 #define DOOR_WIFI_PASSWORD ""
-// Exactly eight digits, privately chosen; no common/default/sequential code.
+// Leave empty to generate and persist a pairing code on first boot.
 #define DOOR_PAIRING_CODE ""
+// Initial AP password and web login password (username: admin).
+// Change it from the setup page. Never commit private factory overrides.
+#define DOOR_SETUP_PASSWORD "DoorSetup-2026"

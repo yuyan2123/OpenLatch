@@ -40,7 +40,28 @@ def main():
     subprocess.run(compiler() + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-O1",
                    "-I", str(ROOT / "tests/fakes"), str(ROOT / "tests/driver_tests.cpp"),
                    "-o", str(driver_exe)], cwd=ROOT, check=True)
-    return subprocess.run([str(driver_exe)], cwd=ROOT).returncode
+    result = subprocess.run([str(driver_exe)], cwd=ROOT)
+    if result.returncode:
+        return result.returncode
+    ir_exe = build / ("infrared_tests.exe" if os.name == "nt" else "infrared_tests")
+    subprocess.run(compiler() + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-O1",
+                   "-I", str(ROOT / "tests/fakes"), str(ROOT / "tests/infrared_tests.cpp"),
+                   "-o", str(ir_exe)], cwd=ROOT, check=True)
+    result = subprocess.run([str(ir_exe)], cwd=ROOT)
+    if result.returncode:
+        return result.returncode
+    setup_exe = build / ("setup_tests.exe" if os.name == "nt" else "setup_tests")
+    subprocess.run(compiler() + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-O1",
+                   "-I", str(ROOT / "tests/fakes"), str(ROOT / "tests/setup_tests.cpp"),
+                   "-o", str(setup_exe)], cwd=ROOT, check=True)
+    result = subprocess.run([str(setup_exe)], cwd=ROOT)
+    if result.returncode:
+        return result.returncode
+    portal_exe = build / ("portal_tests.exe" if os.name == "nt" else "portal_tests")
+    subprocess.run(compiler() + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-O1",
+                   "-I", str(ROOT / "tests/fakes"), str(ROOT / "tests/portal_tests.cpp"),
+                   "-o", str(portal_exe)], cwd=ROOT, check=True)
+    return subprocess.run([str(portal_exe)], cwd=ROOT).returncode
 
 
 if __name__ == "__main__":
