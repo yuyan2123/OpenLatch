@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE svg
+  PUBLIC '-//W3C//DTD SVG 1.0//EN'
+  'http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd'>
+<svg width="507" height="245" preserveAspectRatio="xMinYMin meet" viewBox="0 0 507 245" xmlns="http://www.w3.org/2000/svg" version="1.0" fill-rule="evenodd" xmlns:xlink="http://www.w3.org/1999/xlink">
+	<title>...</title>
+	<desc>...</desc>
+	<clipPath id="clip">
+		<rect x="0" y="0" width="507" height="245"/>
+	</clipPath>
+	<g id="group" transform="scale(1,-1) translate(0,-245)" style="clip-path: url(#clip)">
+		<g transform="">
+			<text x="169.0" y="220" style="font-family: TWB; font-size: 12px;fill: rgb(7%,16%,22%); stroke:none;" transform="translate(0,440) scale(1,-1)">僅限經確認可並聯的原開門按鈕</text>
+			<text x="156.366455078125" y="199" style="font-family: TW; font-size: 9px;fill: rgb(70%,24%,21%); stroke:none;" transform="translate(0,398) scale(1,-1)">A / B 是待確認的實體接點，並非對講機端子名稱</text>
+			<polyline points="58 150, 220 150" style="stroke: rgb(7%,16%,22%); stroke-linecap: butt; stroke-width: 1.8; fill: None; fill-rule: evenodd;"/>
+			<polyline points="286 150, 449 150" style="stroke: rgb(7%,16%,22%); stroke-linecap: butt; stroke-width: 1.8; fill: None; fill-rule: evenodd;"/>
+			<circle cx="220" cy="150" r="2.8" style="stroke: rgb(7%,16%,22%); stroke-linecap: butt; stroke-width: 1; fill: rgb(7%,16%,22%); fill-rule: evenodd;"/>
+			<circle cx="286" cy="150" r="2.8" style="stroke: rgb(7%,16%,22%); stroke-linecap: butt; stroke-width: 1; fill: rgb(7%,16%,22%); fill-rule: evenodd;"/>
+			<polyline points="220 150, 276 173" style="stroke: rgb(7%,16%,22%); stroke-linecap: butt; stroke-width: 2; fill: None; fill-rule: evenodd;"/>
+			<text x="228.0" y="178" style="font-family: TW; font-size: 10px;fill: rgb(7%,16%,22%); stroke:none;" transform="translate(0,356) scale(1,-1)">原開門按鈕</text>
+			<circle cx="86" cy="150" r="2.8" style="stroke: rgb(7%,16%,22%); stroke-linecap: butt; stroke-width: 1; fill: rgb(7%,16%,22%); fill-rule: evenodd;"/>
+			<text x="82.046875" y="161" style="font-family: TWB; font-size: 11px;fill: rgb(7%,16%,22%); stroke:none;" transform="translate(0,322) scale(1,-1)">A</text>
+			<circle cx="421" cy="150" r="2.8" style="stroke: rgb(7%,16%,22%); stroke-linecap: butt; stroke-width: 1; fill: rgb(7%,16%,22%); fill-rule: evenodd;"/>
+			<text x="417.455078125" y="161" style="font-family: TWB; font-size: 11px;fill: rgb(7%,16%,22%); stroke:none;" transform="translate(0,322) scale(1,-1)">B</text>
+			<polyline points="86 150, 86 58, 235 58" style="stroke: rgb(14%,36%,60%); stroke-linecap: butt; stroke-width: 1.8; fill: None; fill-rule: evenodd; stroke-dasharray: 5, 3;"/>
+			<polyline points="421 150, 421 58, 273 58" style="stroke: rgb(14%,36%,60%); stroke-linecap: butt; stroke-width: 1.8; fill: None; fill-rule: evenodd; stroke-dasharray: 5, 3;"/>
+			<rect x="197" y="34" width="113" height="63" rx="5" ry="5" style="stroke: rgb(14%,36%,60%); stroke-linecap: butt; stroke-width: 1; fill: rgb(93%,95%,96%); fill-rule: evenodd;"/>
+			<text x="207" y="76" style="font-family: TWB; font-size: 10px;fill: rgb(7%,16%,22%); stroke:none;" transform="translate(0,152) scale(1,-1)">COM</text>
+			<text x="281" y="76" style="font-family: TWB; font-size: 10px;fill: rgb(7%,16%,22%); stroke:none;" transform="translate(0,152) scale(1,-1)">NO</text>
+			<polyline points="197 58, 235 58" style="stroke: rgb(14%,36%,60%); stroke-linecap: butt; stroke-width: 1.8; fill: None; fill-rule: evenodd;"/>
+			<polyline points="273 58, 310 58" style="stroke: rgb(14%,36%,60%); stroke-linecap: butt; stroke-width: 1.8; fill: None; fill-rule: evenodd;"/>
+			<circle cx="235" cy="58" r="2.8" style="stroke: rgb(7%,16%,22%); stroke-linecap: butt; stroke-width: 1; fill: rgb(7%,16%,22%); fill-rule: evenodd;"/>
+			<circle cx="273" cy="58" r="2.8" style="stroke: rgb(7%,16%,22%); stroke-linecap: butt; stroke-width: 1; fill: rgb(7%,16%,22%); fill-rule: evenodd;"/>
+			<polyline points="235 58, 268 70" style="stroke: rgb(14%,36%,60%); stroke-linecap: butt; stroke-width: 1.8; fill: None; fill-rule: evenodd;"/>
+			<text x="119.24584960937497" y="13" style="font-family: TW; font-size: 9px;fill: rgb(31%,39%,45%); stroke:none;" transform="translate(0,26) scale(1,-1)">虛線：確認電氣相容後，才可由合格人員接上的兩條線。NC 留空。</text>
+		</g>
+	</g>
+</svg>
