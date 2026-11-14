@@ -1,8 +1,21 @@
 # 虛擬驗證紀錄
 
+## 2026-11-14 目前原始碼與實機：1.2.1-ir-setup
+
+- 保留開機 10 分鐘，新增獨立紅外線設定按鍵，可重新開放 10 分鐘；有效的 POST 操作及 `/api/activity` 續時，GET 狀態查詢與遭拒請求不續時。閒置到期後活動請求不能重新開放，須用設定按鍵或重開機。
+- `door_ir` 原開門按鍵資料不變，新增 `door_setup_ir` 命名空間。兩組各自學習、取消、清除並讀回驗證；禁止學成同一按鍵。任一學習期間抑制 HomeKit 與 IR 開門，設定訊號不產生繼電器動作。
+- 依要求將 Digest 驗證整段保留於註解；Host、POST token、Origin、大小限制與設定窗口保留。AP 密碼仍生效。
+- Hallmark 重新設計全英文頁面，使用系統字型與本機 CSS token；嵌入時展開 CSS，不增加裝置外部資源請求。桌面雙欄、手機單欄及段落捷徑，分開顯示門與設定按鍵。清除需確認；斷網／到期提供 Retry，重開窗口後可恢復，保留未儲存欄位。
+- 網頁只在可信任的操作事件後送出續時，每 15 秒最多一次；狀態更新每 2 秒一次，背景分頁暫停查詢。背景更新不產生活動續時。
+- `python tools/simulate.py test` 通過，含原有 20,000 個控制器隨機事件、GPIO／200 ms 計時器、IR、NVS，以及新增的窗口續時／溢位、雙按鍵、重複訊號、用途衝突、設定頁重開、無登入與請求防護測試。
+- Chrome QA 通過 320、390、768、1280、1920 px，測試無憑證載入、背景不續時、實際輸入續時、兩種 IR 學習與清除、設定存檔失敗與重啟、到期及重開。截圖見 `build/setup-desktop.png`、`build/setup-mobile.png`；設計比較見 `.hallmark/compare.html`。
+- ESP32-C3 編譯使用 1,600,334 bytes 程式空間與 51,784 bytes 靜態 RAM。依使用者指示，已將同一建置寫入 COM7（115200），各映像 hash 校驗通過並自動重啟；未清除 NVS。燒錄紀錄：`build/firmware-upload-1.2.1-ir-setup.log`。
+- USB `ir status` 確認 GPIO4 功能 1、輸出啟用、驅動 3，以及 `hardware=ready storage=ready learned=yes enabled=yes`；原開門按鍵保留。開機訊息：`build/firmware-boot-1.2.1-ir-setup.log`。既有的 core-dump 校驗警告在舊版啟動紀錄也存在，本次正常啟動並提供網頁。
+- 實機 `/` 及 `/api/status` 無憑證 HTTP 200；頁面與 `SetupPage.h` 嵌入內容逐位元組相同。Wi-Fi、硬體、設定儲存及兩組 IR 儲存皆正常，原開門按鍵啟用，新設定按鍵尚未學習。結果見 `build/firmware-http-1.2.1-ir-setup.json`。本次未發送開門指令，也未替使用者學習或清除按鍵。
+
 最新實機操作請見文末 2026-11-14 各版本與回退紀錄；本檔開頭保留最初的模擬驗證歷史。
 
-目前實機與主程式版本為 **1.2.0-gpiofix-200ms**：保留原版介面與登入，GPIO4 功能 1、驅動強度 3、脈衝 200 ms。已將實測版本同步至 `firmware/DoorRelease`，標準建置腳本可直接重建相同程式。歷次診斷草稿另存於本機 `.tools/diagnostic-work-before-stable-20261114.patch`，不納入部署。以下保留各次實驗的歷史紀錄，非現行功能清單。
+本次修改前，實機與主程式版本為 **1.2.0-gpiofix-200ms**：保留原版介面與登入，GPIO4 功能 1、驅動強度 3、脈衝 200 ms。當時已將實測版本同步至 `firmware/DoorRelease`；目前原始碼與實機則為上節的 1.2.1-ir-setup。歷次診斷草稿另存於本機 `.tools/diagnostic-work-before-stable-20261114.patch`，不納入部署。以下保留各次實驗的歷史紀錄，非現行功能清單。
 
 日期：2026-11-13，韌體 1.2.0。環境：Windows、Python 3.13、Zig 0.14.1（C++17，`-Wall -Wextra -Werror`）。未連接 ESP32，未燒錄韌體。
 

@@ -6,7 +6,8 @@ constexpr uint32_t kSetupWindowMs = 10 * 60 * 1000;
 constexpr uint32_t kWifiAttemptMs = 30000;
 
 // Offline recovery remains available beyond the normal ten-minute window.
-// This policy never resets bootAt_ on connection loss or incoming requests.
+// Boot and a matched setup IR button open a timed window. Explicit user
+// activity extends an open window; status polling never extends it.
 class SetupPolicy {
  public:
   void begin(uint32_t now, bool credentials) {
@@ -23,6 +24,13 @@ class SetupPolicy {
     online_ = online;
     if (online) recovery_ = false;
     else if (!credentials_ || uint32_t(now - offlineAt_) >= kWifiAttemptMs) recovery_ = true;
+  }
+  void openFromInfrared(uint32_t now) {
+    bootAt_ = now;
+    expired_ = false;
+  }
+  void noteActivity(uint32_t now) {
+    if (web(now)) openFromInfrared(now);
   }
   bool accessPoint(uint32_t) const {
     return !online_ && recovery_;

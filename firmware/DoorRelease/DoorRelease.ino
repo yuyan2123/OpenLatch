@@ -23,10 +23,12 @@ TimedRelay relay;
 door::Controller controller(relay);
 IrStore irStore;
 door::Infrared infrared(irStore);
+IrStore setupIrStore("door_setup_ir");
+door::Infrared setupInfrared(setupIrStore);
 SerialLine serialLine;
 door::DeviceSettings settings;
 SettingsStore settingsStore;
-SetupPortal setupPortal(settings, settingsStore, infrared, controller, relay);
+SetupPortal setupPortal(settings, settingsStore, infrared, setupInfrared, controller, relay);
 std::atomic<bool> networkLost{false};
 bool hardwareReady = false;
 bool homekitStarted = false;
@@ -73,8 +75,9 @@ void syncConnectivity() {
 }
 
 void syncInfrared() {
-  controller.inhibit(millis(), infrared.learning() || setupPortal.restarting());
-  relay.permitInfrared(hardwareReady && infrared.enabled() && !controller.faulted() && !setupPortal.restarting());
+  controller.inhibit(millis(), setupPortal.irLearning() || setupPortal.restarting());
+  relay.permitInfrared(hardwareReady && infrared.enabled() && !setupPortal.irLearning() &&
+                       !controller.faulted() && !setupPortal.restarting());
 }
 
 void irStatus() {
@@ -97,7 +100,7 @@ void serialCommand(const char* command) {
   else if (!strcmp(command, "ir help"))
     Serial.println("Commands: ir status | ir learn | ir cancel | ir forget | ir help");
   else if (!strcmp(command, "ir learn")) {
-    if (!hardwareReady || controller.faulted() || !infrared.learn(millis())) {
+    if (setupInfrared.learning() || !hardwareReady || controller.faulted() || !infrared.learn(millis())) {
       Serial.println("ir_learning: unavailable; check storage/timer and reboot");
       return;
     }
@@ -162,6 +165,8 @@ void setup() {
   hardwareReady = timerReady;
   if (!infrared.begin(millis()))
     Serial.println("ir_storage: error; infrared disabled until storage is repaired and device is rebooted");
+  if (!setupInfrared.begin(millis()))
+    Serial.println("setup_ir_storage: error; repair the setup button from the setup page");
   if (hardwareReady) IrReceiver.begin(door::kIrPin, DISABLE_LED_FEEDBACK);
   syncInfrared();
   Serial.println("USB infrared setup ready. Use: ir help");
@@ -201,7 +206,7 @@ void setup() {
   new Characteristic::Manufacturer("DIY");
   new Characteristic::Model("ESP32-C3 SuperMini");
   new Characteristic::SerialNumber("door-release-001");
-  new Characteristic::FirmwareRevision("1.2.0-gpiofix-200ms");
+  new Characteristic::FirmwareRevision("1.2.1-ir-setup");
   new ReleaseSwitch();
 }
 
@@ -210,10 +215,6 @@ void loop() {
   setupPortal.poll();
   if (setupPortal.restartDue(millis())) { relay.stop(); ESP.restart(); return; }
   if (!hardwareReady) { relay.stop(); delay(10); return; }
-  if (infrared.tick(millis())) {
-    Serial.println("ir_learning: timed out; previous key retained");
-    setupPortal.noteIrEvent(door::IrEvent::TimedOut);
-  }
   syncInfrared();
   syncConnectivity();
   controller.tick(millis());
@@ -223,8 +224,7 @@ void loop() {
   if (!setupPortal.restarting() && IrReceiver.decode()) {
     const auto data = IrReceiver.decodedIRData;
     IrReceiver.resume();
-    const auto event = infrared.receive(millis(), irKey(data), irRepeat(data), irInvalid(data));
-    setupPortal.noteIrEvent(event);
+    const auto event = setupPortal.receiveIr(millis(), irKey(data), irRepeat(data), irInvalid(data));
     syncInfrared();
     if (event == door::IrEvent::Matched) {
       const auto result = controller.infrared(millis(), true);

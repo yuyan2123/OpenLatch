@@ -8,10 +8,11 @@
 // nvs_set_blob + nvs_commit avoids partially updated protocol/address fields.
 class IrStore final : public door::IrStorage {
  public:
+  explicit IrStore(const char* storageNamespace = "door_ir") : namespace_(storageNamespace) {}
   door::IrLoad load(door::IrKey& key) override {
     key = {};
     if (!opened_) {
-      opened_ = nvs_open("door_ir", NVS_READWRITE, &handle_) == ESP_OK;
+      opened_ = nvs_open(namespace_, NVS_READWRITE, &handle_) == ESP_OK;
       if (!opened_) return door::IrLoad::Error;
     }
     uint8_t record[kSize]{};
@@ -66,5 +67,6 @@ class IrStore final : public door::IrStorage {
     return key == door::IrKey{};
   }
   nvs_handle_t handle_ = 0;
+  const char* namespace_;
   bool opened_ = false;
 };

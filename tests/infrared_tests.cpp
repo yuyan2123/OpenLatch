@@ -10,6 +10,7 @@ const door::IrKey key{door::IrProtocol::Nec, 0x1234, 0x45, 32};
 const door::IrKey other{door::IrProtocol::Nec, 0x1234, 0x46, 32};
 void resetStorage() {
   nvsRecord.clear(); nvsPending.clear(); nvsWrites = 0;
+  nvsSetupIrRecord.clear(); nvsSetupIrPending.clear();
   nvsOpenFails = nvsReadFails = nvsWriteFails = nvsCommitFails = nvsCorruptReadback = false;
 }
 void learn(door::Infrared& ir, uint32_t start = 0, const door::IrKey& button = key) {
@@ -71,6 +72,24 @@ void holds_cancellation_and_timeout() {
   const uint32_t start = 0xfffffff0u;
   CHECK(ir.learn(start)); CHECK(!ir.tick(start + 29999)); CHECK(ir.tick(start + 30000));
   learn(ir, start, other); CHECK(ir.key() == other);
+}
+void independent_setup_button_storage() {
+  resetStorage();
+  IrStore doorStore, setupStore("door_setup_ir");
+  door::Infrared doorIr(doorStore), setupIr(setupStore);
+  CHECK(doorIr.begin(0)); CHECK(setupIr.begin(0));
+  learn(doorIr, 0, key); learn(setupIr, 0, other);
+  IrStore rebootDoorStore, rebootSetupStore("door_setup_ir");
+  door::Infrared rebootDoor(rebootDoorStore), rebootSetup(rebootSetupStore);
+  CHECK(rebootDoor.begin(0)); CHECK(rebootSetup.begin(0));
+  CHECK(rebootDoor.key() == key); CHECK(rebootSetup.key() == other);
+  CHECK(rebootSetup.forget(500));
+  IrStore unchangedDoorStore; door::Infrared unchangedDoor(unchangedDoorStore);
+  CHECK(unchangedDoor.begin(0)); CHECK(unchangedDoor.key() == key);
+  nvsSetupIrRecord[0] ^= 1;
+  IrStore damagedSetupStore("door_setup_ir"); door::Infrared damagedSetup(damagedSetupStore);
+  CHECK(!damagedSetup.begin(0)); CHECK(!damagedSetup.enabled());
+  CHECK(unchangedDoor.enabled()); CHECK(damagedSetup.forget(500));
 }
 void storage_failures() {
   resetStorage(); nvsOpenFails = true; IrStore unopened; door::Infrared unavailable(unopened);
@@ -164,7 +183,7 @@ void learned_key_controls_shared_relay() {
   r.advance(400); CHECK(!r.relay.high);
 }
 int main() {
-  enrollment_persistence_and_forget(); holds_cancellation_and_timeout();
+  enrollment_persistence_and_forget(); holds_cancellation_and_timeout(); independent_setup_button_storage();
   storage_failures(); decoding_and_serial_input(); learned_key_controls_shared_relay();
   std::cout << "PASS: infrared enrollment, actual NVS adapter, repeat filtering, USB parsing and shared relay.\n";
 }

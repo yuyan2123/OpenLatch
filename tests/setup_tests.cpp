@@ -41,6 +41,22 @@ void first_boot_and_rollover() {
   policy.tick(start + 30000, false); CHECK(policy.accessPoint(start + 30000));
   policy.tick(start + 600000, true); CHECK(!policy.web(start + 600000));
 }
+void infrared_and_user_activity_windows() {
+  door::SetupPolicy policy;
+  policy.begin(0, true); policy.tick(0, true);
+  policy.noteActivity(599999);
+  CHECK(policy.remaining(600000) == 599999);
+  policy.tick(1199999, true); CHECK(!policy.web(1199999));
+  policy.noteActivity(1200000); CHECK(!policy.web(1200000));
+  policy.openFromInfrared(1500000); CHECK(policy.remaining(1500000) == 600000);
+  CHECK(policy.web(2099999)); CHECK(!policy.web(2100000));
+  policy.tick(2100000, true); CHECK(!policy.web(2100000));
+  const uint32_t start = 0xfffffff0u;
+  policy.openFromInfrared(start); CHECK(policy.web(start + 599999));
+  policy.noteActivity(start + 599999); CHECK(policy.remaining(start + 600000) == 599999);
+  policy.tick(start + 1199999, true); CHECK(!policy.web(start + 1199999));
+  policy.tick(start, true); CHECK(!policy.web(start));
+}
 door::DeviceSettings valid() {
   door::DeviceSettings settings;
   std::strcpy(settings.pairingCode, "59263814");
@@ -114,6 +130,7 @@ void settings_storage() {
   CHECK(unavailable.load(restored) == SettingsStore::Load::Error); CHECK(!unavailable.save(settings));
 }
 int main() {
-  setup_window_and_recovery(); first_boot_and_rollover(); settings_validation(); settings_storage();
+  setup_window_and_recovery(); first_boot_and_rollover(); infrared_and_user_activity_windows();
+  settings_validation(); settings_storage();
   std::cout << "PASS: setup window, persistent offline AP recovery, Wi-Fi validation and actual settings NVS adapter.\n";
 }

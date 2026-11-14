@@ -1,10 +1,14 @@
 # Phone setup: Wi-Fi and infrared
 
-Current build: **1.2.0-gpiofix-200ms** retains this original interface and
-Digest authentication. Relay GPIO initialization is corrected and normal
-IR/HomeKit release pulses are **200 ms**, followed by a 2 second cooldown.
+Current source and uploaded device: **1.2.1-ir-setup**. The redesigned English
+page supports separate door and setup-access IR buttons and a ten-minute idle
+window. Digest login is temporarily commented out at the owner's request.
+GPIO initialization, **200 ms** IR/HomeKit pulses and the 2 second cooldown
+remain unchanged. Upload hashes, boot hardware/storage status and the served
+page matching the embedded build were verified on COM7. The existing door
+button was retained; the new setup button still needs to be learned.
 
-Firmware 1.2.0 embeds a standalone English setup website in flash. It uses no
+The firmware embeds a standalone English setup website in flash. It uses no
 external scripts, fonts, cloud service or internet connection. After the first
 USB firmware upload, routine configuration needs only a phone and power.
 
@@ -12,12 +16,13 @@ USB firmware upload, routine configuration needs only a phone and power.
 
 1. Power on the controller. With no saved Wi-Fi credentials, it immediately
    creates **DoorRelease-XXXXXX**. Join that AP with password **DoorSetup-2026**.
-2. Open **http://192.168.4.1/** in a regular browser. Sign in with username
-   **admin** and password **DoorSetup-2026**. An automatic captive-portal popup
-   may appear; use the regular browser if its login prompt does not work.
+2. Open **http://192.168.4.1/** in a regular browser. Web login is temporarily
+   disabled; the hotspot still requires its password. Use a regular browser
+   if the automatic captive-portal popup does not work.
 3. Enter the **2.4 GHz** network name and password. Optionally choose a private
-   **New setup password** (12–63 printable ASCII characters). It becomes both
-   the website login password and the AP password after restart.
+   **New hotspot password** under **Setup hotspot password** (12 to 63 printable
+   ASCII characters). It becomes the AP password after restart; a blank keeps
+   the existing password. If Digest login is restored, it uses this same value.
 4. Select **Save and restart**. Settings are validated, written to NVS and read
    back before reporting success. The relay stops and requests are inhibited
    while waiting for restart. The page clears password inputs and disables
@@ -26,9 +31,15 @@ USB firmware upload, routine configuration needs only a phone and power.
    using the suffix shown in the AP name (lowercase). The page shows this address
    before saving. You can also use the controller IP from your router's client
    list. If the new credentials fail, reconnect to the AP after 30 seconds.
-6. In **Infrared**, select **Learn button**, then follow the two-press prompt.
+6. In **Remote buttons / Open the door**, select **Learn button**, then follow the two-press prompt.
    **Cancel learning** retains the previous key; **Forget button** removes it.
    The website shows the HomeKit pairing code needed by Apple's Home app.
+7. In **Open setup access**, select **Learn setup button** and teach a different
+   button with the same two-press process. Learning saves immediately. Its later
+   presses reopen the website for ten minutes without a reboot or door pulse.
+   Until a setup button is saved, use the boot window to visit the website.
+   The two buttons are stored independently; using the same button is rejected.
+   Learning either button pauses door release from both HomeKit and IR.
 
 The initial password above applies unless the firmware was built with a private
 `DOOR_SETUP_PASSWORD` override. Restarting reopens setup access but does not reset
@@ -41,25 +52,34 @@ onsite firmware/storage recovery. USB IR diagnostics do not reveal it.
 | --- | --- |
 | No saved Wi-Fi network | Start a password-protected AP and website immediately. |
 | Saved network unavailable | Try it without blocking the control loop; start AP after 30 seconds and retry every 30 seconds. |
-| Online within ten minutes of boot | Offer the website on the LAN; AP is off. |
-| Online at/after ten minutes | Close the website; HomeKit and enrolled IR keep working. |
+| Online within the active window | Offer the website on the LAN; AP is off. |
+| Online after ten minutes without activity | Close the website; HomeKit and enrolled IR keep working. |
+| Saved setup IR button pressed | Open a fresh ten-minute website window; never pulse the relay. |
+| User clicks, types or scrolls in the visible page | Extend the active window to ten minutes. |
 | Still offline after ten minutes | Keep AP, DNS and website running until Wi-Fi connects. |
-| Wi-Fi connects after the deadline | Close AP and website immediately. Restart to configure again on the LAN. |
+| Wi-Fi connects after the idle deadline | Close AP and website. Press the saved setup button or restart to configure on the LAN. |
 | Wi-Fi later drops | Stop HomeKit pulses; after 30 seconds reopen AP recovery, even after the normal deadline. |
 
-The deadline is measured from boot; page views, login, IR learning and network
-changes do not extend it. Offline AP recovery is the explicit exception. Once
-opened for recovery it remains available until a successful station connection,
-including across a `millis()` wrap. Saving network/access settings deliberately
+Boot and a matched setup IR button open ten-minute windows. Accepted POST
+actions and `/api/activity` reset an open window to ten minutes. The page sends
+activity only after trusted pointer, keyboard, input, change or scroll events,
+at most once per 15 seconds while visible. Status GET requests never extend it;
+background tabs pause polling. Rejected requests do not extend access and an
+activity request cannot reopen an expired online window. A held/repeated IR
+signal does not continuously renew access: release for at least 500 ms before
+another press. Offline AP recovery remains available until Wi-Fi connects,
+including across a `millis()` wrap. Saving Wi-Fi/access settings deliberately
 restarts the controller and starts a new boot window.
 
 "Online" means a Wi-Fi station connection with an assigned IP address. It does
 not require internet connectivity. Smartphone warnings about an AP with no
 internet are expected; remain connected while configuring.
 
-An unfinished IR learning session is cancelled if the website closes. Its
-previous stored button remains intact. Stored IR buttons continue to work
-offline and outside the website's setup window.
+An unfinished learning session for either button is cancelled if the website
+closes; its previous stored button remains intact. Stored IR buttons continue
+to work offline and outside the website's setup window. After reopening access,
+select **Retry** in a previously open page or reload it. Retry retains edited
+fields. Forget actions ask for confirmation and affect only their own button.
 
 ## Network fields and storage
 
@@ -70,12 +90,12 @@ network has no password**. An empty password otherwise preserves the password
 only for the unchanged SSID; a new SSID requires a password or the open-network
 checkbox. Leaving the network name empty selects AP-only setup.
 
-An empty **New setup password** preserves the existing login/AP password. No
+An empty **New hotspot password** preserves the existing AP password. No
 current Wi-Fi or setup password is returned by the status API or inserted into
-HTML. HomeKit's pairing code is visible only after authentication.
+HTML. HomeKit's pairing code is visible while the setup window is open.
 
 Settings use a versioned, CRC32-protected blob in `door_setup`, separate from
-the IR `door_ir` namespace and HomeSpan's pairing data. Wi-Fi changes do not
+the IR `door_ir` namespace, setup button `door_setup_ir` namespace and HomeSpan's pairing data. Wi-Fi changes do not
 erase paired controllers or IR keys. With no `secrets.h`, a valid HomeKit pairing
 code is generated and saved on first boot. Optional `secrets.h` factory defaults
 seed missing settings only; persisted web settings take precedence.
@@ -87,9 +107,10 @@ available for diagnosis. A failed save leaves the current runtime unchanged;
 an unverified write may still have reached flash, so retry before restarting.
 
 NVS is not encrypted by this application. Use this HTTP setup website only on
-the protected AP or a trusted LAN. All routes exposing settings require Digest
-authentication; mutations additionally require a per-boot random token and
-same-origin checks. Host checks reject unrelated domains. There is no HTTP door
+the protected AP or a trusted LAN. Digest authentication is currently commented
+out in `SetupPortal::authorize()` for later restoration. During an open window,
+the page and status need no login. Mutations and activity renewal still require
+a per-boot random token and same-origin checks. Host checks reject unrelated domains. There is no HTTP door
 release API, firmware upload route or enabled OTA service.
 
 ## HomeKit port and discovery
@@ -113,7 +134,7 @@ is needed. LAN firewalls must allow the advertised HAP service and local mDNS.
 `python tools/simulate.py test` exercises the actual portal handlers with fake
 network/HTTP/NVS adapters, as well as policy, settings validation, relay safety
 and IR learning. `python tools/test_setup_page.py` runs installed Chrome against
-a local Digest-auth mock API, checks mobile/desktop layout and interactive flows,
+a local no-login mock API, checks mobile/desktop layout and interactive flows,
 and writes screenshots to `build/`. The latter requires QA-only Playwright in
 `.tools/web-qa`; neither test contacts hardware.
 

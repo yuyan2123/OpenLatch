@@ -1,0 +1,26 @@
+[
+  {
+    "date": "2026-11-14",
+    "mode": "redesign",
+    "depth": "full",
+    "scope": "app",
+    "shape": "app screen",
+    "theme": "dose",
+    "deal": "manual; Node unavailable",
+    "genre": "modern-minimal",
+    "nav": "jump links",
+    "footer": "access rules and local address",
+    "signature": "two purpose-specific remote button controls",
+    "sections": ["Connection and idle timer", "Wi-Fi", "HomeKit", "Door button", "Setup-access button", "Access rules"],
+    "imagery": "real application controls; no decorative imagery",
+    "photos": [],
+    "waived": [],
+    "prompt": "Redesign the English door controller setup page for clear phone and desktop use.",
+    "sweep": {
+      "sloplint": "Not run: Node is unavailable. Manual Floor review and Chrome QA used instead.",
+      "browser": "Chrome QA at 320, 390, 768, 1280 and 1920 pixels; embedded HTML tested with firmware CSP",
+      "finish-review": "in-thread; fixes: show unavailable state on connection failure, preserve edits on retry; both verified in QA",
+      "material": "No stand-ins or missing assets. Before/after comparison: .hallmark/compare.html"
+    }
+  }
+]

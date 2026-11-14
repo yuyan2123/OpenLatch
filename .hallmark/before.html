@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Door Release · Setup</title>
+<style>
+:root{--page:#f3f5f2;--surface:#fff;--ink:#172c29;--muted:#566b65;--line:#ced8d1;--accent:#175747;--accent-hover:#104234;--soft:#e6eee7;--error:#9b302d;--warning:#76551c;--focus:#d77d28;--font:system-ui,-apple-system,"Segoe UI",sans-serif;--mono:ui-monospace,"Cascadia Code",monospace}
+*{box-sizing:border-box}html,body{overflow-x:clip}body{margin:0;background:var(--page);color:var(--ink);font-family:var(--font);font-size:16px;line-height:1.5}main{max-width:980px;margin:auto;padding:40px 24px 56px}header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding-bottom:28px;border-bottom:1px solid var(--line)}h1{font-size:clamp(28px,5vw,42px);letter-spacing:-.04em;line-height:1.15;margin:0 0 12px;overflow-wrap:break-word;min-width:0}h2{font-size:22px;margin:0 0 8px;letter-spacing:-.02em}p{margin:0 0 16px}.muted,small{color:var(--muted)}.window{flex-shrink:0;text-align:right;font-size:14px}.window strong{display:block;font-family:var(--mono);font-size:22px;font-weight:500;color:var(--accent)}.connection{padding:16px 0;display:flex;gap:12px 28px;flex-wrap:wrap;font-size:14px}.connection span{overflow-wrap:anywhere}.columns{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(0,1fr);gap:24px;align-items:start}section{padding:24px;background:var(--surface);border:1px solid var(--line);border-radius:10px;min-width:0}.section-intro{font-size:14px;color:var(--muted)}label{display:block;font-size:14px;font-weight:600;margin-bottom:6px}input{width:100%;min-width:0;min-height:46px;padding:10px 12px;border:1px solid var(--line);border-radius:5px;color:var(--ink);background:var(--surface);font:inherit}input:hover{border-color:var(--muted)}input:disabled{background:var(--page);color:var(--muted)}.field{margin:20px 0}.field small{display:block;margin-top:6px;font-size:12px}.check{display:flex;align-items:center;gap:10px;font-weight:400;margin-top:12px}.check input{width:18px;height:18px;min-height:0;accent-color:var(--accent)}button{font:inherit;font-size:14px;font-weight:600;min-height:44px;padding:11px 16px;border-radius:5px;border:1px solid var(--accent);background:var(--accent);color:var(--surface);cursor:pointer}button:hover{background:var(--accent-hover)}button:active{transform:translateY(1px)}button:disabled{cursor:default;opacity:.48;transform:none}.secondary{background:var(--surface);color:var(--accent)}.secondary:hover{background:var(--soft)}.danger{color:var(--error);border-color:var(--line);background:var(--surface)}.danger:hover{background:var(--page)}button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(--focus);outline-offset:3px}.actions{display:flex;gap:10px;flex-wrap:wrap}.save{width:100%}hr{border:0;border-top:1px solid var(--line);margin:24px 0}.note{font-size:13px;padding:12px 0;border-top:1px solid var(--line);color:var(--muted)}.notice{margin:0 0 18px;padding:14px 16px;border-left:3px solid var(--accent);background:var(--soft);font-size:14px;overflow-wrap:anywhere}.notice:empty{display:none}.notice.error{border-color:var(--error);color:var(--error)}.warning{color:var(--warning);font-size:13px}.key{font-family:var(--mono);font-size:14px;margin:18px 0;overflow-wrap:anywhere}.steps{padding-left:22px;margin:18px 0;font-size:14px}.steps li{margin:8px 0}.ir-message{min-height:72px;font-size:14px;padding:16px 0;color:var(--accent);border-top:1px solid var(--line);margin-top:20px}.pairing{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:14px}.pairing code{font-size:21px;letter-spacing:.04em;font-family:var(--mono)}footer{margin-top:26px;color:var(--muted);font-size:13px}footer p{margin:5px 0}a{color:var(--accent)}[hidden]{display:none!important}@media(max-width:720px){main{padding:24px 16px 40px}.columns{grid-template-columns:minmax(0,1fr)}header{gap:12px}.window{font-size:12px}.window strong{font-size:17px}section{padding:20px}h1{font-size:30px}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+<header><div><h1>Door Release</h1><p class="muted">Set up Wi-Fi and your infrared unlock button.</p></div><div class="window">Setup access<strong id="window">Connecting…</strong></div></header>
+<div class="connection" aria-live="polite"><span id="network">Reading connection status…</span><span id="address"></span></div>
+<div id="notice" class="notice" role="status" aria-live="polite"></div>
+<noscript><p class="notice">Enable JavaScript to configure this device. The page works entirely on your local network.</p></noscript>
+<div class="columns">
+<section aria-labelledby="wifi-heading">
+<h2 id="wifi-heading">Wi-Fi</h2><p class="section-intro">Use a 2.4 GHz network. Saving restarts the device.</p>
+<form id="settings-form" autocomplete="off">
+<div class="field"><label for="ssid">Network name</label><input id="ssid" name="ssid" maxlength="32" autocomplete="off" spellcheck="false" disabled><small>Leave empty to use access point setup only.</small></div>
+<div class="field"><label for="wifi-password">Wi-Fi password</label><input id="wifi-password" name="wifi_password" type="password" maxlength="64" autocomplete="new-password" disabled><small>Leave empty to keep the password for the same network.</small><label class="check"><input id="open-network" type="checkbox" name="open_network" value="1" disabled>This network has no password</label></div>
+<hr>
+<div class="field"><label for="setup-password">New setup password</label><input id="setup-password" name="setup_password" type="password" minlength="12" maxlength="63" autocomplete="new-password" disabled><small>Optional. 12–63 printable characters. Used for both this login and the setup AP.</small></div>
+<p id="default-password" class="warning" hidden>The initial setup password is still in use. Choose a private password above.</p>
+<button id="save" class="save" type="submit" disabled>Save and restart</button>
+</form>
+<p class="note">Sign in as <strong>admin</strong>. Keep your setup password for future changes.</p>
+<div class="pairing"><span>HomeKit pairing code</span><code id="pairing-code">—</code></div>
+<small>Existing HomeKit pairings are retained when Wi-Fi changes.</small>
+</section>
+<section aria-labelledby="ir-heading">
+<h2 id="ir-heading">Infrared</h2><p class="section-intro">Learn one button. It also works when Wi-Fi is offline.</p>
+<p id="ir-state" class="key">Reading button status…</p>
+<ol class="steps"><li>Select <strong>Learn button</strong>. Door release pauses during learning.</li><li>Release all buttons for 500 ms, then press the intended button.</li><li>Release for another 500 ms and press the same button again, within 30 seconds.</li></ol>
+<div class="actions"><button id="learn" type="button" disabled>Learn button</button><button id="cancel" class="secondary" type="button" disabled>Cancel learning</button></div>
+<p id="ir-message" class="ir-message" role="status" aria-live="polite">Waiting for the device.</p>
+<button id="forget" class="danger" type="button" disabled>Forget button</button>
+<p class="note">Learning does not open the door. A later press gives a 200 ms pulse, followed by a 2 second cooldown. Keep the receiver in a protected interior location.</p>
+</section>
+</div>
+<footer><p id="access-note">On Wi-Fi, setup closes 10 minutes after boot. Offline access point setup stays available until Wi-Fi connects.</p><p id="hostname"></p></footer>
+</main>
+<script>
+"use strict";
+const byId=id=>document.getElementById(id);
+let token="",initialized=false,busy=false,stopped=false,lastState=null;
+function notice(message,error=false){const element=byId("notice");element.textContent=message;element.classList.toggle("error",error)}
+function controls(){const ready=initialized&&!busy&&!stopped;document.querySelectorAll("#settings-form input").forEach(element=>element.disabled=!ready);byId("wifi-password").disabled=!ready||byId("open-network").checked;byId("save").disabled=!ready||Boolean(lastState&&lastState.ir_learning);byId("learn").disabled=!ready||!lastState||!lastState.hardware_ready||!lastState.ir_ready;byId("cancel").disabled=!ready||!lastState||!lastState.ir_learning;byId("forget").disabled=!ready}
+async function request(path,body){const options={cache:"no-store",credentials:"same-origin"};if(body!==undefined){options.method="POST";options.headers={"X-Setup-Token":token,"Content-Type":"application/x-www-form-urlencoded"};options.body=body}const response=await fetch(path,options);if(response.status===410){stopped=true;byId("window").textContent="Closed";controls()}let data;try{data=await response.json()}catch{throw new Error("Sign in again or reload this page.")}if(!response.ok){if(response.status===410)notice(data.message,true);throw new Error(data.message||"The device could not complete this request.")}return data}
+function render(state){lastState=state;token=state.token;if(!initialized){byId("ssid").value=state.ssid;initialized=true}byId("network").textContent=state.connected?"Connected to "+state.ssid:"Setup access point: "+state.ap_name;byId("address").textContent=state.ip;byId("window").textContent=state.connected?Math.floor(state.remaining_seconds/60)+":"+String(state.remaining_seconds%60).padStart(2,"0"):"Offline recovery";byId("pairing-code").textContent=state.pairing_code.replace(/^(\d{3})(\d{2})(\d{3})$/,"$1-$2-$3");byId("default-password").hidden=!state.default_password;byId("ir-state").textContent=state.ir_learning?"Learning in progress":state.ir_enabled?state.ir_protocol+" / "+state.ir_address.toString(16).toUpperCase()+" / "+state.ir_command.toString(16).toUpperCase():"No active unlock button";byId("ir-message").textContent=state.ir_event;byId("hostname").textContent="Local address after Wi-Fi connects: http://"+state.hostname+"/";if(!state.hardware_ready)notice("Relay timer fault. Door release is disabled; check the hardware and restart.",true);else if(!state.settings_ready)notice("Settings storage needs attention. Save your settings to repair it.",true);else if(!state.ir_ready)notice("Infrared storage needs attention. Use Forget button, then learn again.",true);controls()}
+async function refresh(){if(stopped)return;try{const state=await request("/api/status");if(!stopped)render(state)}catch(error){if(!stopped)notice(error.message==="Failed to fetch"?"Device unavailable. Reconnect to Wi-Fi and reload this page.":error.message,true)}finally{if(!stopped)setTimeout(refresh,1000)}}
+byId("open-network").addEventListener("change",controls);
+byId("settings-form").addEventListener("submit",async event=>{event.preventDefault();if(busy||stopped||!initialized)return;const body=new URLSearchParams(new FormData(event.currentTarget));body.set("wifi_password",byId("open-network").checked?"":byId("wifi-password").value);busy=true;controls();notice("Saving settings…");try{const data=await request("/api/settings",body.toString());stopped=true;byId("wifi-password").value="";byId("setup-password").value="";notice(data.message+" Use http://"+lastState.hostname+"/ after reconnecting, or http://192.168.4.1/ on the setup AP.");byId("window").textContent="Restarting"}catch(error){notice(error.message,true)}finally{busy=false;controls()}});
+for(const action of ["learn","cancel","forget"])byId(action).addEventListener("click",async()=>{if(busy||stopped||!initialized)return;busy=true;controls();try{const data=await request("/api/ir/"+action,"");notice(data.message);render(await request("/api/status"))}catch(error){notice(error.message,true)}finally{busy=false;controls()}});
+refresh();
+</script>
+</body>
+</html>
