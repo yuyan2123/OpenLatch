@@ -1,6 +1,6 @@
 # Phone setup: Wi-Fi and infrared
 
-Current source and uploaded device: **1.2.2-multi-ir**. The English
+Current source and uploaded device: **1.2.3-web-recovery**. The English
 page supports up to 16 door buttons and 16 setup-access buttons and a ten-minute idle
 window. Digest login is temporarily commented out at the owner's request.
 GPIO initialization, **200 ms** IR/HomeKit pulses and the 2 second cooldown
@@ -74,6 +74,19 @@ another press. Offline AP recovery remains available until Wi-Fi connects,
 including across a `millis()` wrap. Saving Wi-Fi/access settings deliberately
 restarts the controller and starts a new boot window.
 
+The visible countdown runs locally using a monotonic browser clock and the
+device's `remaining_ms`, updating once per displayed second. It continues while
+a status request is delayed. Successful activity/action responses synchronize
+the new deadline; a local countdown never grants access beyond the device policy.
+All API calls are serialized so status, activity and user operations do not race
+the synchronous server. Each request has a 12-second timeout. Temporary status
+failures retry automatically with 1/2/4/8-second backoff, retaining edited fields;
+mutations are never automatically replayed. Explicit expiry disables actions,
+then probes every five seconds to detect a new IR-opened window without a reload.
+Returning to the foreground or restoring network connectivity triggers a status
+check, not an activity renewal. While setup is open, Wi-Fi modem sleep is disabled;
+closing the window restores the exact previous sleep setting.
+
 "Online" means a Wi-Fi station connection with an assigned IP address. It does
 not require internet connectivity. Smartphone warnings about an AP with no
 internet are expected; remain connected while configuring.
@@ -81,8 +94,8 @@ internet are expected; remain connected while configuring.
 An unfinished learning session for either button is cancelled if the website
 closes; its previous stored button remains intact. Stored IR buttons continue
 to work offline and outside the website's setup window. After reopening access,
-select **Retry** in a previously open page or reload it. Retry retains edited
-fields. Removal and clearing ask for confirmation. Removal affects only the
+an already open page reconnects automatically; **Retry** requests an immediate
+check. Edited fields are retained. Removal and clearing ask for confirmation. Removal affects only the
 selected button; clearing affects only that action's list. A full list disables
 adding until a button is removed. Buttons retain their slot IDs when another
 is removed; a reused slot gets a fingerprint check to prevent stale deletion.
@@ -148,6 +161,11 @@ and IR learning. `python tools/test_setup_page.py` runs installed Chrome against
 a local no-login mock API, checks mobile/desktop layout and interactive flows,
 and writes screenshots to `build/`. The latter requires QA-only Playwright in
 `.tools/web-qa`; neither test contacts hardware.
+
+`python tools/test_setup_resilience.py` injects slow replies, HTTP 503, truncated
+JSON and dropped connections. It checks per-second countdown during a delayed
+request, single-request concurrency, automatic recovery, no mutation replay,
+and preservation of edits across an expired/reopened window.
 
 Real AP association, DHCP, captive-portal behavior, mDNS, iPhone/HomePod pairing
 and coexistence with physical IR pulses still need isolated hardware tests.

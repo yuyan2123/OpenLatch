@@ -208,7 +208,7 @@ void setup() {
   new Characteristic::Manufacturer("DIY");
   new Characteristic::Model("ESP32-C3 SuperMini");
   new Characteristic::SerialNumber("door-release-001");
-  new Characteristic::FirmwareRevision("1.2.2-multi-ir");
+  new Characteristic::FirmwareRevision("1.2.3-web-recovery");
   new ReleaseSwitch();
 }
 

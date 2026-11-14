@@ -173,12 +173,17 @@ class SetupPortal {
     }
     const bool wantWeb = policy_.web(now);
     if (wantWeb && !webActive_) {
+      // Favor responsive HTTP while setup is open, then restore the prior
+      // modem power policy when the window closes.
+      savedSleep_ = WiFi.getSleep();
+      WiFi.setSleep(WIFI_PS_NONE);
       server_.begin();
       webActive_ = true;
       Serial.println("setup_web: started on port 80");
     } else if (!wantWeb && webActive_) {
       server_.stop();
       webActive_ = false;
+      WiFi.setSleep(savedSleep_);
       if (irLearning()) {
         infrared_.cancel(now);
         setupInfrared_.cancel(now);
@@ -254,7 +259,12 @@ class SetupPortal {
     // Only accepted user actions renew access. GET/status and rejected requests do not.
     if (code >= 200 && code < 300 && server_.method() == HTTP_POST)
       policy_.noteActivity(millis());
-    server_.send( code, "application/json", String("{\"message\":") + quoted(text) + "}");
+    String json = String("{\"message\":") + quoted(text);
+    if (code >= 200 && code < 300) {
+      json += ",\"remaining_ms\":" + String(policy_.remaining(millis()));
+      json += ",\"setup_window_ms\":" + String(door::kSetupWindowMs);
+    }
+    server_.send(code, "application/json", json + "}");
   }
   static String fingerprint(const door::IrKey& key) {
     return String(door::name(key.protocol)) + ":" + String(key.address) + ":" +
@@ -304,11 +314,16 @@ class SetupPortal {
     json.reserve(5200);
     json = String("{\"token\":") + quoted(token_) + ",\"ssid\":" + quoted(settings_.ssid);
     json += String(",\"connected\":") + (connected ? "true" : "false");
+    json += ",\"uptime_ms\":" + String(millis());
+    json += ",\"wifi_rssi\":" + String(connected ? WiFi.RSSI() : 0);
     json += String(",\"ap\":") + (apActive_ ? "true" : "false");
     json += ",\"ap_name\":" + quoted(apName_);
     json += ",\"ip\":" + quoted(connected ? WiFi.localIP().toString() : WiFi.softAPIP().toString());
     json += ",\"hostname\":" + quoted(String(hostname_) + ".local");
-    json += ",\"remaining_seconds\":" + String((policy_.remaining(millis()) + 999) / 1000);
+    const uint32_t remaining = policy_.remaining(millis());
+    json += ",\"remaining_seconds\":" + String((remaining + 999) / 1000);
+    json += ",\"remaining_ms\":" + String(remaining);
+    json += ",\"setup_window_ms\":" + String(door::kSetupWindowMs);
     json += ",\"pairing_code\":" + quoted(settings_.pairingCode);
     json += String(",\"default_password\":") + (!strcmp(settings_.setupPassword, door::kDefaultSetupPassword) ? "true" : "false");
     json += String(",\"settings_ready\":") + (storageReady_ ? "true" : "false");
@@ -387,5 +402,6 @@ class SetupPortal {
   const char* lastSetupIrEvent_ = "Not set. Learn a setup button here during the boot window.";
   bool webActive_ = false, apActive_ = false, storageReady_ = false, hardwareReady_ = false;
   bool restarting_ = false;
+  wifi_ps_type_t savedSleep_ = WIFI_PS_MIN_MODEM;
   uint32_t restartAt_ = 0;
 };

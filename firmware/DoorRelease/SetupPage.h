@@ -165,12 +165,14 @@ footer{margin-top:var(--space-xl);padding-top:var(--space-lg);border-top:1px sol
 "use strict";
 const byId=id=>document.getElementById(id);
 let token="",initialized=false,busy=false,stopped=false,lastState=null,refreshTimer=null;
-let activityTimer=null,lastActivitySent=0,activityPending=false;
-function notice(message,error=false,retry=false){byId("notice").hidden=!message;byId("notice-text").textContent=message;byId("notice").classList.toggle("error",error);byId("retry").hidden=!retry}
+let activityTimer=null,lastActivitySent=0,lastUserActivity=0,activityPending=false;
+let connectionFailed=false,connectionNotice=false,failures=0,restarting=false,refreshInFlight=false;
+let requestTail=Promise.resolve(),countdownUntil=0;
+function notice(message,error=false,retry=false){connectionNotice=false;byId("notice").hidden=!message;byId("notice-text").textContent=message;byId("notice").classList.toggle("error",error);byId("retry").hidden=!retry}
 function controls(){
-  const ready=initialized&&!busy&&!stopped,learning=Boolean(lastState&&(lastState.ir_learning||lastState.setup_ir_learning));
-  document.querySelectorAll("#settings-form input").forEach(element=>element.disabled=!ready);
-  byId("wifi-password").disabled=!ready||byId("open-network").checked;
+  const editable=initialized&&!busy&&!stopped,ready=editable&&!connectionFailed,learning=Boolean(lastState&&(lastState.ir_learning||lastState.setup_ir_learning));
+  document.querySelectorAll("#settings-form input").forEach(element=>element.disabled=!editable);
+  byId("wifi-password").disabled=!editable||byId("open-network").checked;
   byId("save").disabled=!ready||learning;byId("save-hint").textContent=learning?"Finish or cancel button learning before saving.":"Changes take effect after restart.";
   byId("learn").disabled=!ready||learning||!lastState||!lastState.hardware_ready||!lastState.ir_ready||lastState.ir_count>=lastState.ir_capacity;
   byId("cancel").disabled=!ready||!lastState||!lastState.ir_learning;
@@ -180,15 +182,45 @@ function controls(){
   byId("setup-forget").disabled=!ready||learning||Boolean(lastState&&lastState.setup_ir_ready&&!lastState.setup_ir_count);
   document.querySelectorAll("[data-remove-group]").forEach(button=>button.disabled=!ready||learning);
 }
-function closePage(message){stopped=true;clearTimeout(refreshTimer);clearTimeout(activityTimer);byId("window").textContent="Closed";notice(message,true,true);controls()}
-async function request(path,body){
-  const options={cache:"no-store",credentials:"same-origin",signal:AbortSignal.timeout(5000)};
-  if(body!==undefined){options.method="POST";options.headers={"X-Setup-Token":token,"Content-Type":"application/x-www-form-urlencoded"};options.body=body}
-  const response=await fetch(path,options);let data;
-  try{data=await response.json()}catch{throw new Error("Reload this page and try again.")}
-  if(response.status===410)closePage(data.message);
-  if(!response.ok)throw new Error(data.message||"The device could not complete this request.");
-  return data;
+function scheduleRefresh(delay=2000){clearTimeout(refreshTimer);if(!restarting)refreshTimer=setTimeout(refresh,delay)}
+function updateCountdown(){
+  if(stopped||!lastState)return;
+  if(!lastState.connected){byId("window").textContent="Offline recovery";return}
+  const seconds=Math.max(0,Math.ceil((countdownUntil-performance.now())/1000));
+  byId("window").textContent=Math.floor(seconds/60)+":"+String(seconds%60).padStart(2,"0");
+}
+function syncCountdown(data,renew=false){
+  const remaining=Number.isFinite(data.remaining_ms)?data.remaining_ms:data.remaining_seconds*1000;
+  if(!Number.isFinite(remaining))return;
+  const until=performance.now()+Math.max(0,remaining);
+  // Small network jitter must not make the displayed seconds run backwards.
+  countdownUntil=renew||!countdownUntil||until>countdownUntil+1500?until:Math.min(until,countdownUntil);
+  updateCountdown();
+}
+function closePage(message){stopped=true;clearTimeout(activityTimer);activityTimer=null;activityPending=false;byId("window").textContent="Closed";notice(message+" This page will reconnect automatically when setup access reopens.",true,true);controls();scheduleRefresh(5000)}
+function disconnected(error){
+  if(restarting)return;
+  connectionFailed=true;
+  if(!stopped){notice("Connection interrupted. Reconnecting automatically; your edits are kept.",true,true);connectionNotice=true}
+  controls();scheduleRefresh(1000);
+}
+function reportError(error){if(error.status===410)return;if(!error.status)disconnected(error);else notice(error.message,true)}
+function request(path,body){
+  const setupToken=token;
+  const task=requestTail.then(async()=>{
+    const options={cache:"no-store",credentials:"same-origin",signal:AbortSignal.timeout(12000)};
+    if(body!==undefined){options.method="POST";options.headers={"X-Setup-Token":setupToken,"Content-Type":"application/x-www-form-urlencoded"};options.body=body}
+    const response=await fetch(path,options);let data;
+    try{data=await response.json()}catch{throw new Error("The device response was interrupted. Reconnecting automatically.")}
+    if(response.status===410)closePage(data.message);
+    if(!response.ok){const error=new Error(data.message||"The device could not complete this request.");error.status=response.status;throw error}
+    if(body!==undefined)syncCountdown(data,true);
+    return data;
+  });
+  // ESP32's synchronous server processes one request at a time. Never race
+  // status polling, activity renewal and a user's settings/IR operation.
+  requestTail=task.catch(()=>{});
+  return task;
 }
 function keyText(state,prefix,empty){
   if(state[prefix+"learning"])return "Learning in progress";
@@ -211,10 +243,14 @@ function renderButtons(state,prefix,listId,group){
   }
 }
 function render(state){
+  if(restarting)return;
+  const renewed=stopped||token!==state.token;
+  if(connectionNotice||stopped)notice("");
+  stopped=false;connectionFailed=false;failures=0;
   lastState=state;token=state.token;if(!initialized){byId("ssid").value=state.ssid;initialized=true}
   byId("network").textContent=state.connected?"Connected to "+state.ssid:"Setup hotspot: "+state.ap_name;
   byId("address").textContent=state.ip;
-  byId("window").textContent=state.connected?Math.floor(state.remaining_seconds/60)+":"+String(state.remaining_seconds%60).padStart(2,"0"):"Offline recovery";
+  syncCountdown(state,renewed);
   byId("pairing-code").textContent=state.pairing_code.replace(/^(\d{3})(\d{2})(\d{3})$/,"$1-$2-$3");
   byId("default-password").hidden=!state.default_password;
   byId("ir-state").textContent=keyText(state,"ir_","No active unlock button");
@@ -228,40 +264,47 @@ function render(state){
   else if(!state.setup_ir_ready)notice("Setup button storage needs attention. Use Clear all setup buttons, then learn again.",true);
   controls();
 }
-function unavailable(error){return error.message==="Failed to fetch"||error.name==="TimeoutError"?"Device unavailable. Press the saved setup button or restart, then select Retry.":error.message}
 async function refresh(){
-  clearTimeout(refreshTimer);if(stopped)return;
-  if(document.visibilityState!=="visible"){refreshTimer=setTimeout(refresh,2000);return}
-  try{const state=await request("/api/status");if(!stopped)render(state)}
-  catch(error){if(!stopped){stopped=true;byId("window").textContent="Unavailable";notice(unavailable(error),true,true);controls()}}
-  finally{if(!stopped)refreshTimer=setTimeout(refresh,2000)}
+  clearTimeout(refreshTimer);if(restarting||refreshInFlight)return;
+  if(document.visibilityState!=="visible"||busy){scheduleRefresh();return}
+  refreshInFlight=true;
+  try{
+    render(await request("/api/status"));
+    if(activityPending&&Date.now()-lastUserActivity<15000&&activityTimer===null)activityTimer=setTimeout(sendActivity,0);
+  }
+  catch(error){failures=Math.min(failures+1,4);if(error.status!==410)disconnected(error)}
+  finally{refreshInFlight=false;scheduleRefresh(stopped?5000:connectionFailed?Math.min(8000,1000*2**(failures-1)):2000)}
 }
 async function sendActivity(){
-  activityTimer=null;if(!activityPending||!initialized||stopped||document.visibilityState!=="visible")return;
+  activityTimer=null;if(!activityPending||!initialized||stopped||connectionFailed||document.visibilityState!=="visible")return;
   if(busy){activityTimer=setTimeout(sendActivity,1000);return}
-  activityPending=false;lastActivitySent=Date.now();
-  try{await request("/api/activity","")}catch(error){if(!stopped)notice(unavailable(error),true,true)}
+  if(Date.now()-lastUserActivity>=15000){activityPending=false;return}
+  activityPending=false;
+  try{await request("/api/activity","");lastActivitySent=Date.now()}
+  catch(error){activityPending=Date.now()-lastUserActivity<15000;reportError(error)}
 }
 function userActivity(event){
   if(!event.isTrusted||!initialized||stopped||document.visibilityState!=="visible")return;
-  activityPending=true;if(activityTimer!==null)return;
+  lastUserActivity=Date.now();activityPending=true;if(activityTimer!==null||connectionFailed)return;
   activityTimer=setTimeout(sendActivity,Math.max(0,15000-(Date.now()-lastActivitySent)));
 }
 for(const event of ["pointerdown","keydown","input","change","scroll"])document.addEventListener(event,userActivity,{capture:true,passive:true});
-byId("retry").addEventListener("click",()=>{stopped=false;activityPending=false;clearTimeout(activityTimer);activityTimer=null;notice("");refresh()});
+byId("retry").addEventListener("click",()=>refresh());
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){updateCountdown();refresh()}});
+window.addEventListener("online",()=>refresh());
 byId("open-network").addEventListener("change",controls);
 byId("settings-form").addEventListener("submit",async event=>{
   event.preventDefault();if(busy||stopped||!initialized)return;
   const body=new URLSearchParams(new FormData(event.currentTarget));body.set("wifi_password",byId("open-network").checked?"":byId("wifi-password").value);
   busy=true;byId("save").setAttribute("aria-busy","true");controls();notice("Saving settings…");
-  try{const data=await request("/api/settings",body.toString());stopped=true;clearTimeout(refreshTimer);clearTimeout(activityTimer);byId("wifi-password").value="";byId("setup-password").value="";notice(data.message+" Use http://"+lastState.hostname+"/ after reconnecting, or http://192.168.4.1/ on the setup hotspot.");byId("window").textContent="Restarting"}
-  catch(error){notice(unavailable(error),true)}finally{busy=false;byId("save").removeAttribute("aria-busy");controls()}
+  try{const data=await request("/api/settings",body.toString());restarting=true;stopped=true;clearTimeout(refreshTimer);clearTimeout(activityTimer);byId("wifi-password").value="";byId("setup-password").value="";notice(data.message+" Use http://"+lastState.hostname+"/ after reconnecting, or http://192.168.4.1/ on the setup hotspot.");byId("window").textContent="Restarting"}
+  catch(error){reportError(error)}finally{busy=false;byId("save").removeAttribute("aria-busy");controls();if(!restarting)scheduleRefresh(1000)}
 });
 async function buttonAction(button,path,body=""){
   busy=true;button.setAttribute("aria-busy","true");controls();
   try{await request(path,body);notice("");render(await request("/api/status"))}
-  catch(error){notice(unavailable(error),true);if(!stopped)try{render(await request("/api/status"))}catch{}}
-  finally{busy=false;button.removeAttribute("aria-busy");controls()}
+  catch(error){reportError(error);if(!stopped&&!connectionFailed)try{render(await request("/api/status"))}catch(statusError){reportError(statusError)}}
+  finally{busy=false;button.removeAttribute("aria-busy");controls();scheduleRefresh(connectionFailed?1000:2000)}
 }
 for(const [prefix,route] of [["","/api/ir/"],["setup-","/api/setup-ir/"]])for(const action of ["learn","cancel","forget"]){
   const button=byId(prefix+action);
@@ -280,6 +323,7 @@ for(const id of ["ir-buttons","setup-ir-buttons"])byId(id).addEventListener("cli
   await buttonAction(button,group==="door"?"/api/ir/remove":"/api/setup-ir/remove",body.toString());
   if(!button.isConnected){const next=byId(id).querySelector("button")||byId(group==="door"?"learn":"setup-learn");next.focus({preventScroll:true})}
 });
+setInterval(updateCountdown,200);
 refresh();
 </script>
 </body>

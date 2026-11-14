@@ -9,6 +9,7 @@ import shutil
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
@@ -26,10 +27,15 @@ STATE = {}
 REQUESTS = []
 SAVE_FAILURE = False
 EXPIRED = False
+DEADLINE = 0
+STATUS_FAULTS = []
+STATUS_DELAY = 0
+IN_FLIGHT = MAX_IN_FLIGHT = 0
+IO_LOCK = threading.Lock()
 
 
 def reset():
-    global SAVE_FAILURE, EXPIRED
+    global SAVE_FAILURE, EXPIRED, DEADLINE, STATUS_DELAY, MAX_IN_FLIGHT
     STATE.clear()
     STATE.update(token="1234567890abcdef1234567890abcdef", ssid="Home Network",
                  connected=True, ap=False, ap_name="DoorRelease-AABBCC", ip="192.168.1.42",
@@ -45,6 +51,30 @@ def reset():
                  setup_ir_count=0, setup_ir_capacity=16, setup_ir_buttons=[])
     REQUESTS.clear()
     SAVE_FAILURE = EXPIRED = False
+    DEADLINE = time.monotonic() + 580
+    STATUS_FAULTS.clear()
+    STATUS_DELAY = MAX_IN_FLIGHT = 0
+
+
+def timing():
+    remaining = max(0, round((DEADLINE - time.monotonic()) * 1000))
+    return dict(remaining_ms=remaining, remaining_seconds=(remaining + 999)//1000, setup_window_ms=600000)
+
+
+@contextmanager
+def track_request(path):
+    global IN_FLIGHT, MAX_IN_FLIGHT
+    tracked = path.startswith("/api/")
+    if tracked:
+        with IO_LOCK:
+            IN_FLIGHT += 1
+            MAX_IN_FLIGHT = max(MAX_IN_FLIGHT, IN_FLIGHT)
+    try:
+        yield
+    finally:
+        if tracked:
+            with IO_LOCK:
+                IN_FLIGHT -= 1
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -52,6 +82,10 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def reply(self, status, data, content_type="application/json"):
+        global DEADLINE
+        if isinstance(data, dict) and 200 <= status < 300 and self.command == "POST":
+            DEADLINE = time.monotonic() + 600
+            data = dict(data, **timing())
         payload = data if isinstance(data, bytes) else json.dumps(data).encode()
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -65,19 +99,39 @@ class Handler(BaseHTTPRequestHandler):
             pass  # The browser may cancel a request while reloading or closing.
 
     def do_GET(self):
+        with track_request(self.path):
+            self.handle_get()
+
+    def handle_get(self):
         if self.path == "/":
             self.reply(200, PAGE, "text/html; charset=utf-8")
         elif self.path == "/tokens.css":
             self.reply(200, (ROOT / "firmware/DoorRelease/web/tokens.css").read_bytes(), "text/css")
         elif self.path == "/api/status":
+            if STATUS_DELAY:
+                time.sleep(STATUS_DELAY)
+            fault = STATUS_FAULTS.pop(0) if STATUS_FAULTS else None
+            if fault == "disconnect":
+                self.close_connection = True
+                return
+            if fault == "json":
+                self.reply(200, b'{"interrupted":')
+                return
+            if fault:
+                self.reply(fault, {"message": "Temporary device error."})
+                return
             if EXPIRED:
                 self.reply(410, {"message": "Setup window closed. Press the learned setup button or restart, then reload."})
             else:
-                self.reply(200, dict(STATE))
+                self.reply(200, dict(STATE, **timing()))
         else:
             self.reply(404, {"message": "Not found."})
 
     def do_POST(self):
+        with track_request(self.path):
+            self.handle_post()
+
+    def handle_post(self):
         if EXPIRED:
             self.reply(410, {"message": "Setup window closed. Press the learned setup button or restart, then reload."})
             return

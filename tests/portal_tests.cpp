@@ -79,13 +79,16 @@ void browser_learning_and_forget() {
 }
 void expiry_and_late_offline_recovery() {
   Fixture f(true); CHECK(!WiFi.ap); CHECK(WiFi.attempts == 1);
+  CHECK(WiFi.getSleep() == WIFI_PS_NONE);
   fakeWeb->host = "192.168.1.42"; WiFi.connected = true;
   f.portal.poll(); f.token();
   fakeMillis = 600000;
   fakeWeb->request("/api/ir/learn", HTTP_POST); CHECK(fakeWeb->code == 410); CHECK(!f.ir.learning());
   f.portal.poll(); CHECK(!fakeWeb->active);
+  CHECK(WiFi.getSleep() == WIFI_PS_MIN_MODEM);
   WiFi.connected = false; f.portal.poll(); CHECK(!WiFi.ap);
   fakeMillis += 30000; f.portal.poll(); CHECK(WiFi.ap); CHECK(fakeWeb->active);
+  CHECK(WiFi.getSleep() == WIFI_PS_NONE);
   fakeMillis += 3600000; f.portal.poll(); CHECK(WiFi.ap); CHECK(fakeWeb->active);
   fakeWeb->host = "192.168.4.1"; f.token();
   fakeWeb->request("/api/ir/learn", HTTP_POST); CHECK(f.ir.learning());
@@ -94,6 +97,7 @@ void expiry_and_late_offline_recovery() {
   CHECK(!WiFi.ap); CHECK(fakeWeb->active); CHECK(f.ir.learning());
   fakeMillis += door::kSetupWindowMs; f.portal.poll();
   CHECK(!WiFi.ap); CHECK(!fakeWeb->active); CHECK(!f.ir.learning());
+  CHECK(WiFi.getSleep() == WIFI_PS_MIN_MODEM);
 }
 void save_validation_and_restart() {
   Fixture f; f.token();
@@ -167,8 +171,10 @@ void activity_and_status_polling() {
   fakeWeb->request("/api/activity", HTTP_POST); CHECK(fakeWeb->code == 403);
   fakeWeb->request("/api/status"); CHECK(fakeWeb->body.find("\"remaining_seconds\":10") != std::string::npos);
   f.token(); fakeWeb->request("/api/activity", HTTP_POST); CHECK(fakeWeb->code == 200);
+  CHECK(fakeWeb->body.find("\"remaining_ms\":600000") != std::string::npos);
   fakeMillis = 600000; f.portal.poll(); CHECK(fakeWeb->active);
   fakeWeb->request("/api/status"); CHECK(fakeWeb->body.find("\"remaining_seconds\":590") != std::string::npos);
+  CHECK(fakeWeb->body.find("\"remaining_ms\":590000") != std::string::npos);
   fakeMillis = 1190000;
   fakeWeb->request("/api/activity", HTTP_POST); CHECK(fakeWeb->code == 410);
   f.portal.poll(); CHECK(!fakeWeb->active);
