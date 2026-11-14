@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
     r.advance(500); irInput(r, infrared);
     r.advance(500); irInput(r, infrared);
     r.advance(500); irInput(r, infrared); status(r);
-    r.advance(400); status(r);
+    r.advance(door::kPulseMs); status(r);
     return 0;
   }
   if (std::string(argv[1]) != "--interactive") return 2;

@@ -2,7 +2,7 @@
 #include <cstdint>
 
 namespace door {
-constexpr uint32_t kPulseMs = 400;
+constexpr uint32_t kPulseMs = 200;
 constexpr uint32_t kMaxPulseMs = 800;
 constexpr uint32_t kCooldownMs = 2000;
 constexpr uint32_t kBootGuardMs = 3000;

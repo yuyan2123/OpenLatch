@@ -22,11 +22,11 @@ void pulse_and_duplicates() {
   Rig r; r.ready();
   CHECK(r.on() == Result::Accepted);
   r.advance(100); CHECK(r.on() == Result::Busy);
-  r.advance(299); CHECK(r.relay.high);
+  r.advance(99); CHECK(r.relay.high);
   r.advance(1); CHECK(!r.relay.high);
   CHECK(!r.controller.actionOn());
   CHECK(r.relay.trace.size() == 2);
-  CHECK(r.relay.trace[1].at - r.relay.trace[0].at == 400);
+  CHECK(r.relay.trace[1].at - r.relay.trace[0].at == 200);
   CHECK(r.on() == Result::Cooldown);
   r.advance(1999); CHECK(r.on() == Result::Cooldown);
   r.advance(1); CHECK(r.on() == Result::Accepted);
@@ -35,7 +35,7 @@ void independent_deadline() {
   Rig r; r.ready(); CHECK(r.on() == Result::Accepted);
   r.advance(10000, false);  // Main loop never polls during the entire pulse.
   CHECK(!r.relay.high);
-  CHECK(r.relay.trace.back().at == 3400);
+  CHECK(r.relay.trace.back().at == 3200);
   CHECK(r.relay.now == 13000);
   r.controller.tick(r.now());
   CHECK(!r.controller.actionOn());
@@ -137,7 +137,7 @@ void infrared_and_homekit_coexistence() {
   CHECK(r.controller.infrared(r.now(), true) == Result::Accepted);
   r.advance(10000, false);
   CHECK(!r.relay.high);
-  CHECK(r.relay.trace.back().at - r.relay.trace[r.relay.trace.size() - 2].at == 400);
+  CHECK(r.relay.trace.back().at - r.relay.trace[r.relay.trace.size() - 2].at == 200);
   r.controller.trip(r.now());
   CHECK(r.controller.infrared(r.now(), true) == Result::Fault);
 }
@@ -147,12 +147,12 @@ void millis_wraparound() {
   r.network(true, true); r.advance(2999);
   CHECK(r.on() == Result::BootGuard);
   r.advance(1); CHECK(r.on() == Result::Accepted);
-  r.advance(400); CHECK(!r.relay.high);
+  r.advance(200); CHECK(!r.relay.high);
   r.advance(2000); CHECK(r.on() == Result::Accepted);
   // Pulse itself straddles uint32_t millis rollover.
   Rig p; p.ready(); p.advance(0xffffffffULL - 100 - p.relay.now);
   CHECK(p.on() == Result::Accepted);
-  p.advance(399); CHECK(p.relay.high);
+  p.advance(199); CHECK(p.relay.high);
   p.advance(1); CHECK(!p.relay.high);
 }
 void randomized_invariants() {
@@ -177,7 +177,7 @@ void randomized_invariants() {
   for (size_t i = 0; i < r.relay.trace.size(); i += 2) {
     CHECK(r.relay.trace[i].on);
     CHECK(!r.relay.trace[i+1].on);
-    CHECK(r.relay.trace[i+1].at - r.relay.trace[i].at <= 400);
+    CHECK(r.relay.trace[i+1].at - r.relay.trace[i].at <= 200);
   }
 }
 int main() {

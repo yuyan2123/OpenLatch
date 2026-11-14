@@ -10,8 +10,15 @@
 class TimedRelay final : public door::Relay {
  public:
   bool begin() {
-    gpio_set_level(pin_, 0);
-    gpio_set_direction(pin_, GPIO_MODE_OUTPUT);
+    if (gpio_set_level(pin_, 0) != ESP_OK) return false;
+    gpio_config_t config{};
+    config.pin_bit_mask = uint64_t(1) << pin_;
+    config.mode = GPIO_MODE_OUTPUT;
+    config.pull_up_en = GPIO_PULLUP_DISABLE;
+    config.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    config.intr_type = GPIO_INTR_DISABLE;
+    if (gpio_config(&config) != ESP_OK) return false;
+    if (gpio_set_drive_capability(pin_, GPIO_DRIVE_CAP_3) != ESP_OK) return false;
     esp_timer_create_args_t args{};
     args.callback = timeout;
     args.arg = this;

@@ -1,5 +1,9 @@
 # Phone setup: Wi-Fi and infrared
 
+Current build: **1.2.0-gpiofix-200ms** retains this original interface and
+Digest authentication. Relay GPIO initialization is corrected and normal
+IR/HomeKit release pulses are **200 ms**, followed by a 2 second cooldown.
+
 Firmware 1.2.0 embeds a standalone English setup website in flash. It uses no
 external scripts, fonts, cloud service or internet connection. After the first
 USB firmware upload, routine configuration needs only a phone and power.

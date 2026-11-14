@@ -78,6 +78,11 @@ void syncInfrared() {
 }
 
 void irStatus() {
+  gpio_io_config_t pinConfig{};
+  if (gpio_get_io_config(static_cast<gpio_num_t>(door::kRelayPin), &pinConfig) == ESP_OK)
+    Serial.printf("relay_pin: pin=4 function=%lu output=%d drive=%lu\n",
+                  static_cast<unsigned long>(pinConfig.fun_sel), pinConfig.oe,
+                  static_cast<unsigned long>(pinConfig.drv));
   const auto& key = infrared.key();
   Serial.printf("ir_status: hardware=%s storage=%s learned=%s learning=%s enabled=%s "
                 "protocol=%s address=0x%X command=0x%X bits=%u\n",
@@ -196,7 +201,7 @@ void setup() {
   new Characteristic::Manufacturer("DIY");
   new Characteristic::Model("ESP32-C3 SuperMini");
   new Characteristic::SerialNumber("door-release-001");
-  new Characteristic::FirmwareRevision("1.2.0");
+  new Characteristic::FirmwareRevision("1.2.0-gpiofix-200ms");
   new ReleaseSwitch();
 }
 

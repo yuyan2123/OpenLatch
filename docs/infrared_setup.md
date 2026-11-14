@@ -1,5 +1,9 @@
 # Infrared learning and door release
 
+Current build: **1.2.0-gpiofix-200ms**. GPIO4 is explicitly configured as a
+GPIO output with drive strength 3; the default release pulse is **200 ms**.
+The original English setup page and Digest login are retained.
+
 Firmware 1.2.0 supports one locally enrolled unlock button. All firmware identifiers,
 comments and messages are English. No key is enrolled by default. Enrollment is
 available through the authenticated setup website or optional local USB serial
@@ -8,7 +12,7 @@ access, login and the ten-minute window with persistent offline recovery.
 
 Connect receiver VCC to ESP32 3V3, GND to GND and S to GPIO3. Verify the pin
 markings on the actual receiver. The relay still uses GPIO4 and the existing
-400 ms independent shutoff timer.
+200 ms independent shutoff timer.
 
 ## Learn a button
 
@@ -27,7 +31,7 @@ markings on the actual receiver. The relay still uses GPIO4 and the existing
    A replacement becomes active only after successful storage. Cancel or timeout
    retains the previous key. A storage failure disables IR until successfully
    cleared or reloaded after reboot.
-5. Release the button, then press again to request a **400 ms** relay pulse.
+5. Release the button, then press again to request a **200 ms** relay pulse.
    Observe the **3 second boot guard** and **2 second cooldown** after stopping.
    The enrolled key survives reboot; a learning session does not. When the normal
    online setup window closes, unfinished learning is cancelled and the previous

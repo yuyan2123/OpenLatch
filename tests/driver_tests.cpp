@@ -6,15 +6,23 @@
 #define CHECK(x) do { if (!(x)) { std::cerr << __LINE__ << " failed: " #x "\n"; std::exit(1); } } while (0)
 TimedRelay* current = nullptr;
 int main() {
+  fakeGpioLatch = 1;  // Must preload OFF before enabling the pad.
   TimedRelay relay;
   current = &relay;
   CHECK(relay.begin()); CHECK(fakeGpio == 0);
+  CHECK(fakeHighWrites == 0); CHECK(fakeGpioMuxSelected); CHECK(fakeGpioOutput);
+  CHECK(fakeGpioConfig.pin_bit_mask == (uint64_t(1) << door::kRelayPin));
+  CHECK(fakeGpioConfig.pull_up_en == GPIO_PULLUP_DISABLE);
+  CHECK(fakeGpioConfig.pull_down_en == GPIO_PULLDOWN_ENABLE);
+  CHECK(fakeGpioConfig.intr_type == GPIO_INTR_DISABLE);
+  CHECK(fakeGpioDrive == GPIO_DRIVE_CAP_3);
   CHECK(!relay.start(400));  // Default permission OFF.
   relay.permit(true);
   CHECK(!relay.start(0)); CHECK(!relay.start(801));
   CHECK(fakeGpio == 0);
-  CHECK(relay.start(400)); CHECK(fakeTimer.armed);
-  CHECK(fakeTimer.duration == 400000); CHECK(fakeGpio == 1);
+  CHECK(door::kPulseMs == 200);
+  CHECK(relay.start(door::kPulseMs)); CHECK(fakeTimer.armed);
+  CHECK(fakeTimer.duration == 200000); CHECK(fakeGpio == 1);
   fakeExpire(); CHECK(!relay.active()); CHECK(fakeGpio == 0);
 
   CHECK(relay.start(400)); relay.permit(false);
@@ -58,9 +66,25 @@ int main() {
   fakeExpire(); CHECK(fakeGpio == 0);
   fakeAfterArm = nullptr;
 
+  TimedRelay noConfig;
+  fakeGpioConfigFails = true;
+  CHECK(!noConfig.begin()); noConfig.permit(true);
+  CHECK(!noConfig.start(200)); CHECK(fakeGpio == 0);
+  fakeGpioConfigFails = false;
+  TimedRelay noLevel;
+  fakeGpioLevelFails = true;
+  CHECK(!noLevel.begin()); noLevel.permitInfrared(true);
+  CHECK(!noLevel.start(200, door::Source::Infrared)); CHECK(fakeGpio == 0);
+  fakeGpioLevelFails = false;
+  TimedRelay noDrive;
+  fakeGpioDriveFails = true;
+  CHECK(!noDrive.begin()); noDrive.permit(true); noDrive.permitInfrared(true);
+  CHECK(!noDrive.start(200)); CHECK(!noDrive.start(200, door::Source::Infrared));
+  CHECK(fakeGpio == 0); fakeGpioDriveFails = false;
+
   TimedRelay broken;
   fakeCreateFails = true;
   CHECK(!broken.begin()); broken.permit(true);
   CHECK(!broken.start(400)); CHECK(fakeGpio == 0);
-  std::cout << "PASS: actual TimedRelay adapter, source permissions, timer failure and callback interleavings.\n";
+  std::cout << "PASS: actual TimedRelay adapter, GPIO mux/drive initialization, 200 ms timing, source permissions, timer failure and callback interleavings.\n";
 }
