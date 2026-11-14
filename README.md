@@ -1,6 +1,6 @@
 # ESP32-C3 門禁按鈕控制器
 
-目前原始碼與實機版本為 **1.2.1-ir-setup**：重新設計全英文設定頁，新增獨立的紅外線設定按鍵，操作網頁會延長 10 分鐘設定窗口，網頁登入暫時註解。保留 GPIO4 初始化修正、驅動強度 3、紅外線與 HomeKit 共用的 **200 ms（0.2 秒）**脈衝，以及 2 秒冷卻時間。已燒錄至 COM7，映像 hash 校驗通過；重啟後確認硬體與儲存正常、原開門按鍵保留，新網頁無須登入並與建置內容一致。紀錄見 [VALIDATION.md](VALIDATION.md)。
+目前原始碼與實機版本為 **1.2.2-multi-ir**：開門與開啟設定頁各可儲存 **16 組紅外線按鍵**，可新增、查看清單、逐筆移除或全部清除，原單組資料自動沿用。維持全英文設定頁、操作續時的 10 分鐘窗口及暫停網頁登入。GPIO4 驅動強度 3、**200 ms（0.2 秒）**脈衝與 2 秒冷卻時間不變。已燒錄至 COM7，hash 校驗通過，實機確認原有開門與設定按鍵均保留。紀錄見 [VALIDATION.md](VALIDATION.md)。
 
 接線與操作請參考 [繁體中文 PDF 說明書](docs/door_lock_manual_zh-TW.pdf)（10 頁，含零件照片、接線圖與英文網頁／IR 設定頁），另有 [Markdown 版本](docs/door_lock_manual_zh-TW.md)。第 3～4 頁為控制器側接線；對講機只能在原按鈕接點經確認後，依第 7 頁的條件式接法評估介接。
 
@@ -16,10 +16,10 @@ Apple Home 的「Front Door Release」是一個瞬時開關。OFF 只代表控�
 2. 瀏覽 **`http://192.168.4.1/`**；目前網頁不需帳號密碼。如果系統跳出的網路登入視窗無法操作，改用一般瀏覽器開啟此網址。
 3. 在 **Wi-Fi connection** 填入 2.4 GHz 網路名稱與密碼；可展開 **Setup hotspot password**，用 **New hotspot password** 修改 AP 密碼。按 **Save and restart** 儲存、重新啟動；重新開機不會重設密碼。原登入驗證程式保留在註解內，日後恢復時仍使用同一組設定密碼。
 4. 成功連線後，手機切回同一 Wi-Fi，開啟 **`http://door-release-xxxxxx.local/`**，或路由器顯示的裝置 IP。網址尾碼與 AP 相同，字母改小寫；存檔前網頁也會顯示此網址。
-5. 在 **Remote buttons / Open the door** 按 **Learn button**，依畫面提示分開按同一按鍵兩次，每次之間放開至少 500 ms；30 秒內完成。也可按 **Cancel learning** 或 **Forget button**。
-6. 在 **Open setup access** 按 **Learn setup button**，用另一個按鍵完成相同的兩次學習。此按鍵只開放設定網頁，不開門；尚未設定時，須先利用開機窗口進網頁學習。兩種用途不能使用同一按鍵。學習立即儲存，不必再按 Wi-Fi 的儲存按鈕。
+5. 在 **Remote buttons / Open the door** 按 **Add door button**，依畫面提示分開按同一按鍵兩次，每次之間放開至少 500 ms；30 秒內完成。新增不覆蓋既有按鍵，最多 16 組；可按 **Cancel learning** 取消。清單的 **Remove** 只刪除該筆，**Clear all door buttons** 則清除全部開門按鍵。
+6. 在 **Open setup access** 按 **Add setup button**，完成相同的兩次學習；此用途也可儲存 16 組，並有逐筆移除與全部清除。設定按鍵只開放網頁，不開門；尚未設定時，先利用開機窗口進網頁學習。兩種用途不能共用同一按鍵，重複學習不多占名額。學習立即儲存，不必再按 Wi-Fi 的儲存按鈕。
 
-Wi-Fi 與兩組 IR 設定都存入 NVS，斷電仍保留。HomeKit 配對碼會在首次啟動時產生並儲存，網頁開放時可查看；Wi-Fi 改動不清除已有配對。不需要建立 `secrets.h`，也不需要為日常設定接電腦。首次燒錄仍使用 USB。
+Wi-Fi 與兩種用途的 IR 清單都存入 NVS，斷電仍保留。HomeKit 配對碼會在首次啟動時產生並儲存，網頁開放時可查看；Wi-Fi 改動不清除已有配對。不需要建立 `secrets.h`，也不需要為日常設定接電腦。首次燒錄仍使用 USB。
 
 這裡的「連線成功」指連上 Wi-Fi 並取得 IP，不要求連上外網。HomeKit 和已學習的 IR 在設定網頁關閉後照常使用。網頁使用 `80` 埠；HomeKit 使用 `1201`，經 Bonjour 公布，無須在家庭 App 填埠號。完整流程與故障處理見 [Web setup](docs/web_setup.md)。PDF 說明書仍記錄舊版介面與登入流程，以本節及 Web setup 為準。
 
@@ -88,7 +88,7 @@ quit
 
 接收板電源接 `3V3`、接地接 `GND`、訊號接 `GPIO3`。初始未學習任何按鍵，不會因紅外線訊號開門。IR 學習與開門不需要 `secrets.h`、Wi-Fi 或 HomeKit 配對。
 
-1. 開啟上述手機設定網頁，在 **Remote buttons / Open the door** 按 **Learn button**。
+1. 開啟上述手機設定網頁，在 **Remote buttons / Open the door** 按 **Add door button**。
 2. 先放開遙控器按鍵至少 500 ms，再按一下要用來開門的按鍵。
 3. 畫面顯示第一次按壓已擷取後，放開至少 500 ms，再按同一按鍵。需在啟動學習後 30 秒內完成。
 4. 顯示 **Button learned and saved** 即完成，這兩次學習按壓不會開門。設定會存入 NVS，重開機仍保留。正常連線模式下若設定網頁到期，未完成的學習會取消並保留舊設定。
@@ -100,9 +100,9 @@ USB 設定仍可選用：串列監控設定為 **115200**，換行選 LF、CR �
 | --- | --- |
 | `ir help` | 列出設定指令 |
 | `ir status` | 查看硬體、儲存、已學習按鍵及啟用狀態 |
-| `ir learn` | 學習／覆寫一個開門按鍵 |
+| `ir learn` | 新增一個開門按鍵，保留既有按鍵 |
 | `ir cancel` | 取消學習，保留原按鍵 |
-| `ir forget` | 清除按鍵並停用 IR 開門；也可修復損壞的 IR 紀錄，不影響 HomeKit 配對 |
+| `ir forget` | 清除全部開門按鍵並停用 IR 開門；也可修復損壞的 IR 紀錄，不影響 HomeKit 配對或設定按鍵 |
 
 支援 NEC／NEC2、Sony、Samsung／SamsungLG、RC5、RC6、JVC；不提供未知波形學習。儲存寫入或讀回驗證失敗時，立即停用 IR；清除失敗後，舊設定仍可能於重開機載入，須重試 `ir forget` 直到成功。一般紅外線碼可以被複製及重播，接收器應安裝在受保護的室內範圍；雙次確認與長按防護不提供加密認證。完整英文操作與驗證步驟見 [IR setup](docs/infrared_setup.md)。
 

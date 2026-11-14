@@ -1,12 +1,12 @@
 # Phone setup: Wi-Fi and infrared
 
-Current source and uploaded device: **1.2.1-ir-setup**. The redesigned English
-page supports separate door and setup-access IR buttons and a ten-minute idle
+Current source and uploaded device: **1.2.2-multi-ir**. The English
+page supports up to 16 door buttons and 16 setup-access buttons and a ten-minute idle
 window. Digest login is temporarily commented out at the owner's request.
 GPIO initialization, **200 ms** IR/HomeKit pulses and the 2 second cooldown
 remain unchanged. Upload hashes, boot hardware/storage status and the served
 page matching the embedded build were verified on COM7. The existing door
-button was retained; the new setup button still needs to be learned.
+and setup buttons were retained during the upgrade.
 
 The firmware embeds a standalone English setup website in flash. It uses no
 external scripts, fonts, cloud service or internet connection. After the first
@@ -31,14 +31,17 @@ USB firmware upload, routine configuration needs only a phone and power.
    using the suffix shown in the AP name (lowercase). The page shows this address
    before saving. You can also use the controller IP from your router's client
    list. If the new credentials fail, reconnect to the AP after 30 seconds.
-6. In **Remote buttons / Open the door**, select **Learn button**, then follow the two-press prompt.
-   **Cancel learning** retains the previous key; **Forget button** removes it.
+6. In **Remote buttons / Open the door**, select **Add door button**, then follow the two-press prompt.
+   New buttons are appended, up to 16. **Cancel learning** retains saved buttons.
+   Each list row has **Remove**; **Clear all door buttons** clears this whole list.
    The website shows the HomeKit pairing code needed by Apple's Home app.
-7. In **Open setup access**, select **Learn setup button** and teach a different
+7. In **Open setup access**, select **Add setup button** and teach a different
    button with the same two-press process. Learning saves immediately. Its later
    presses reopen the website for ten minutes without a reboot or door pulse.
    Until a setup button is saved, use the boot window to visit the website.
-   The two buttons are stored independently; using the same button is rejected.
+   The two lists are stored independently, with up to 16 buttons in each.
+   Cross-action conflicts are rejected; duplicate learning does not consume a slot.
+   Use a row's **Remove** or **Clear all setup buttons** to revoke setup buttons.
    Learning either button pauses door release from both HomeKit and IR.
 
 The initial password above applies unless the firmware was built with a private
@@ -79,7 +82,10 @@ An unfinished learning session for either button is cancelled if the website
 closes; its previous stored button remains intact. Stored IR buttons continue
 to work offline and outside the website's setup window. After reopening access,
 select **Retry** in a previously open page or reload it. Retry retains edited
-fields. Forget actions ask for confirmation and affect only their own button.
+fields. Removal and clearing ask for confirmation. Removal affects only the
+selected button; clearing affects only that action's list. A full list disables
+adding until a button is removed. Buttons retain their slot IDs when another
+is removed; a reused slot gets a fingerprint check to prevent stale deletion.
 
 ## Network fields and storage
 
@@ -99,6 +105,11 @@ the IR `door_ir` namespace, setup button `door_setup_ir` namespace and HomeSpan'
 erase paired controllers or IR keys. With no `secrets.h`, a valid HomeKit pairing
 code is generated and saved on first boot. Optional `secrets.h` factory defaults
 seed missing settings only; persisted web settings take precedence.
+
+Each IR namespace stores one atomic v2 blob with 16 fixed slots and CRC32.
+Old v1 single-button records load into slot 0 without a write; the next successful
+addition, removal or clearing upgrades that namespace. Storage verification
+failure disables the affected list until repaired or successfully reloaded.
 
 Corrupt or unreadable setup storage falls back to AP recovery with the initial
 setup password and no active HomeKit service. Save settings to repair the

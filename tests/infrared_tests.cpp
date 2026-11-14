@@ -71,7 +71,7 @@ void holds_cancellation_and_timeout() {
   // Timeout arithmetic must survive millis() rollover.
   const uint32_t start = 0xfffffff0u;
   CHECK(ir.learn(start)); CHECK(!ir.tick(start + 29999)); CHECK(ir.tick(start + 30000));
-  learn(ir, start, other); CHECK(ir.key() == other);
+  learn(ir, start, other); CHECK(ir.contains(other)); CHECK(ir.contains(key)); CHECK(ir.count() == 2);
 }
 void independent_setup_button_storage() {
   resetStorage();
@@ -90,6 +90,69 @@ void independent_setup_button_storage() {
   IrStore damagedSetupStore("door_setup_ir"); door::Infrared damagedSetup(damagedSetupStore);
   CHECK(!damagedSetup.begin(0)); CHECK(!damagedSetup.enabled());
   CHECK(unchangedDoor.enabled()); CHECK(damagedSetup.forget(500));
+}
+void multiple_buttons_and_capacity() {
+  resetStorage(); IrStore store; door::Infrared ir(store); CHECK(ir.begin(0));
+  uint32_t now = 1000;
+  for (uint16_t command = 0; command < door::kIrMaxKeys; ++command) {
+    learn(ir, now, {door::IrProtocol::Nec, 0x4567, command, 32}); now += 1500;
+    CHECK(ir.count() == command + 1);
+  }
+  CHECK(!ir.learn(now)); CHECK(ir.count() == door::kIrMaxKeys);
+  for (uint16_t command = 0; command < door::kIrMaxKeys; ++command) {
+    CHECK(ir.receive(now, {door::IrProtocol::Nec, 0x4567, command, 32}) == IrEvent::Matched); now += 500;
+  }
+  CHECK(!ir.remove(now, door::kIrMaxKeys)); CHECK(ir.count() == door::kIrMaxKeys);
+  CHECK(ir.remove(now, 4)); CHECK(ir.count() == door::kIrMaxKeys - 1);
+  CHECK(!ir.contains({door::IrProtocol::Nec, 0x4567, 4, 32}));
+  CHECK(!ir.remove(now, 4));
+  const int writes = nvsWrites;
+  CHECK(ir.learn(now));
+  CHECK(ir.receive(now + 500, ir.at(0)) == IrEvent::Captured);
+  CHECK(ir.receive(now + 1000, ir.at(0)) == IrEvent::Duplicate);
+  CHECK(nvsWrites == writes); CHECK(ir.count() == door::kIrMaxKeys - 1); CHECK(!ir.learning());
+  now += 1500;
+  const door::IrKey replacement{door::IrProtocol::Sony, 9, 99, 12};
+  learn(ir, now, replacement); CHECK(ir.at(4) == replacement);
+  IrStore rebootStore; door::Infrared reboot(rebootStore); CHECK(reboot.begin(0));
+  CHECK(reboot.count() == door::kIrMaxKeys); CHECK(reboot.contains(replacement));
+  CHECK(reboot.remove(500, 0)); CHECK(reboot.contains(replacement));
+  CHECK(reboot.forget(1000)); CHECK(reboot.count() == 0); CHECK(!reboot.enabled());
+  IrStore emptyStore; door::Infrared empty(emptyStore); CHECK(empty.begin(0)); CHECK(empty.count() == 0);
+}
+void legacy_single_key_migration() {
+  resetStorage();
+  // Actual v1 layout for NEC 0x1234 / 0x45 / 32, with its original CRC32.
+  const std::vector<uint8_t> legacy{0x49,0x52,0x01,0x01,0x01,0x00,0x34,0x12,
+                                    0x45,0x00,0x20,0x00,0xfc,0x5d,0x5b,0x7e};
+  nvsRecord = legacy; nvsSetupIrRecord = legacy;
+  IrStore store, setupStore("door_setup_ir"); door::Infrared ir(store), setupIr(setupStore);
+  CHECK(ir.begin(0)); CHECK(ir.count() == 1); CHECK(ir.key() == key);
+  CHECK(setupIr.begin(0)); CHECK(setupIr.count() == 1); CHECK(setupIr.key() == key);
+  CHECK(nvsWrites == 0); CHECK(nvsRecord == legacy); CHECK(nvsSetupIrRecord == legacy);
+  learn(ir, 1000, other); CHECK(ir.count() == 2); CHECK(ir.contains(key)); CHECK(ir.contains(other));
+  CHECK(nvsRecord.size() == 136); CHECK(nvsRecord[2] == 2); CHECK(nvsSetupIrRecord == legacy);
+  IrStore rebootStore; door::Infrared reboot(rebootStore); CHECK(reboot.begin(0));
+  CHECK(reboot.count() == 2); CHECK(reboot.contains(key)); CHECK(reboot.contains(other));
+  CHECK(reboot.remove(1000, 0));
+  IrStore afterRemoval; door::Infrared remaining(afterRemoval); CHECK(remaining.begin(0));
+  CHECK(remaining.count() == 1); CHECK(remaining.key() == other);
+  resetStorage();
+  nvsRecord = {0x49,0x52,0x01,0x00,0,0,0,0,0,0,0,0,0xd5,0x44,0x0f,0x19};
+  IrStore tombstone; door::Infrared disabled(tombstone);
+  CHECK(disabled.begin(0)); CHECK(disabled.count() == 0); CHECK(!disabled.enabled());
+  learn(disabled, 1000); CHECK(disabled.count() == 1);
+}
+void removal_storage_failure() {
+  for (int mode = 0; mode < 3; ++mode) {
+    resetStorage(); IrStore store; door::Infrared ir(store); CHECK(ir.begin(0));
+    learn(ir, 1000, key); learn(ir, 2500, other); CHECK(ir.count() == 2);
+    nvsWriteFails = mode == 0; nvsCommitFails = mode == 1; nvsCorruptReadback = mode == 2;
+    CHECK(!ir.remove(4000, 0)); CHECK(!ir.ready()); CHECK(!ir.enabled());
+    CHECK(ir.receive(4500, other) == IrEvent::Ignored);
+    nvsWriteFails = nvsCommitFails = nvsCorruptReadback = false;
+    CHECK(ir.forget(5000)); CHECK(ir.ready()); CHECK(ir.count() == 0);
+  }
 }
 void storage_failures() {
   resetStorage(); nvsOpenFails = true; IrStore unopened; door::Infrared unavailable(unopened);
@@ -111,7 +174,7 @@ void storage_failures() {
     CHECK(!loaded.begin(0)); CHECK(!loaded.enabled());
   }
   nvsRecord = goodRecord; nvsRecord.pop_back();
-  IrStore truncated; door::IrKey loaded;
+  IrStore truncated; door::IrKeys loaded;
   CHECK(truncated.load(loaded) == door::IrLoad::Error);
   nvsRecord = goodRecord; nvsRecord.push_back(0);
   IrStore oversized; CHECK(oversized.load(loaded) == door::IrLoad::Error);
@@ -184,6 +247,7 @@ void learned_key_controls_shared_relay() {
 }
 int main() {
   enrollment_persistence_and_forget(); holds_cancellation_and_timeout(); independent_setup_button_storage();
+  multiple_buttons_and_capacity(); legacy_single_key_migration(); removal_storage_failure();
   storage_failures(); decoding_and_serial_input(); learned_key_controls_shared_relay();
   std::cout << "PASS: infrared enrollment, actual NVS adapter, repeat filtering, USB parsing and shared relay.\n";
 }

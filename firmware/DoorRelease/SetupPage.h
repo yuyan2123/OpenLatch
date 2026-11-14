@@ -93,6 +93,12 @@ summary{cursor:pointer;min-height:44px;align-content:center;font-size:var(--text
 .actions{display:flex;flex-wrap:wrap;gap:var(--space-sm);margin-top:var(--space-md)}
 .ir-message{font-size:var(--text-sm);color:var(--color-muted);min-height:3.1em;margin-top:var(--space-sm)}
 .remote .danger{font-size:var(--text-sm)}
+.button-list{list-style:none;margin:var(--space-md) 0 0;padding:0}
+.button-list:empty{display:none}
+.button-list li{display:flex;justify-content:space-between;align-items:center;gap:var(--space-sm);padding-block:var(--space-sm);border-top:1px solid var(--color-rule)}
+.button-list li>div{min-width:0}.button-list span{display:block;font-size:var(--text-sm);font-weight:500}
+.button-list code{display:block;font-family:var(--font-mono);font-size:var(--text-sm);color:var(--color-muted);overflow-wrap:anywhere}
+.button-list button{flex-shrink:0;font-size:var(--text-sm)}
 .steps{margin:var(--space-sm) 0 0;padding-left:var(--space-lg);font-size:var(--text-sm);color:var(--color-muted)}.steps li+li{margin-top:var(--space-xs)}
 .pairing{margin-top:var(--space-xl);padding-top:var(--space-lg);border-top:1px solid var(--color-rule)}
 .pairing code{display:block;margin-top:var(--space-md);font-family:var(--font-mono);font-size:var(--text-section);font-variant-numeric:tabular-nums}
@@ -133,22 +139,24 @@ footer{margin-top:var(--space-xl);padding-top:var(--space-lg);border-top:1px sol
 <section class="pairing" aria-labelledby="pairing-heading"><h2 id="pairing-heading">HomeKit</h2><p class="section-intro">Add this device in the Apple Home app.</p><div><span class="hint">HomeKit pairing code</span><code id="pairing-code">Loading…</code></div><small>Existing HomeKit pairings are retained when Wi-Fi changes.</small></section>
 </div>
 <section class="remote-controls" aria-labelledby="ir-heading">
-  <h2 id="ir-heading">Remote buttons</h2><p class="section-intro">Use a different infrared button for each action.</p>
+  <h2 id="ir-heading">Remote buttons</h2><p class="section-intro">Save up to 16 buttons per action. Keep the two actions on different buttons.</p>
   <div class="remote">
-    <h3>Open the door</h3><p class="description">Works offline. A press gives a 200 ms pulse with a 2 second cooldown.</p>
+    <h3>Open the door</h3><p class="description">Saved buttons work offline. A press gives a 200 ms pulse with a 2 second cooldown.</p>
     <p id="ir-state" class="key">Reading button status…</p>
-    <div class="actions"><button id="learn" type="button" disabled>Learn button</button><button id="cancel" class="secondary" type="button" disabled>Cancel learning</button></div>
+    <ul id="ir-buttons" class="button-list" aria-label="Saved door buttons"></ul>
+    <div class="actions"><button id="learn" type="button" disabled>Add door button</button><button id="cancel" class="secondary" type="button" disabled>Cancel learning</button></div>
     <p id="ir-message" class="ir-message" role="status" aria-live="polite">Waiting for the device.</p>
-    <button id="forget" class="danger" type="button" disabled>Forget button</button>
+    <button id="forget" class="danger" type="button" disabled>Clear all door buttons</button>
   </div>
   <div class="remote">
     <h3>Open setup access</h3><p class="description">Reopens this page for 10 minutes without restarting. Does not open the door.</p>
     <p id="setup-ir-state" class="key">Reading button status…</p>
-    <div class="actions"><button id="setup-learn" type="button" disabled>Learn setup button</button><button id="setup-cancel" class="secondary" type="button" disabled>Cancel learning</button></div>
+    <ul id="setup-ir-buttons" class="button-list" aria-label="Saved setup buttons"></ul>
+    <div class="actions"><button id="setup-learn" type="button" disabled>Add setup button</button><button id="setup-cancel" class="secondary" type="button" disabled>Cancel learning</button></div>
     <p id="setup-ir-message" class="ir-message" role="status" aria-live="polite">Not set. Learn a setup button here during the boot window.</p>
-    <button id="setup-forget" class="danger" type="button" disabled>Forget setup button</button>
+    <button id="setup-forget" class="danger" type="button" disabled>Clear all setup buttons</button>
   </div>
-  <details><summary>How to learn a button</summary><ol class="steps"><li>Select the learn action above. Door release pauses during learning.</li><li>Release all buttons for 500 ms, then press the intended button.</li><li>Release for another 500 ms and press the same button again within 30 seconds.</li></ol><p class="section-intro">Learning does not open the door. Keep the receiver in a protected interior location.</p></details>
+  <details><summary>How to add a button</summary><ol class="steps"><li>Select Add door button or Add setup button. Door release pauses during learning.</li><li>Release all buttons for 500 ms, then press the intended button.</li><li>Release for another 500 ms and press the same button again within 30 seconds.</li></ol><p class="section-intro">Saved buttons are retained. Learning does not open the door. Keep the receiver in a protected interior location.</p></details>
 </section>
 </div>
 <footer><p id="access-note">Setup opens for 10 minutes after boot or a setup button press. Using this page resets the timer. Background updates do not.</p><p>Offline hotspot setup stays available until Wi-Fi connects.</p><p id="hostname"></p></footer>
@@ -164,12 +172,13 @@ function controls(){
   document.querySelectorAll("#settings-form input").forEach(element=>element.disabled=!ready);
   byId("wifi-password").disabled=!ready||byId("open-network").checked;
   byId("save").disabled=!ready||learning;byId("save-hint").textContent=learning?"Finish or cancel button learning before saving.":"Changes take effect after restart.";
-  byId("learn").disabled=!ready||learning||!lastState||!lastState.hardware_ready||!lastState.ir_ready;
+  byId("learn").disabled=!ready||learning||!lastState||!lastState.hardware_ready||!lastState.ir_ready||lastState.ir_count>=lastState.ir_capacity;
   byId("cancel").disabled=!ready||!lastState||!lastState.ir_learning;
-  byId("forget").disabled=!ready||learning;
-  byId("setup-learn").disabled=!ready||learning||!lastState||!lastState.hardware_ready||!lastState.setup_ir_ready;
+  byId("forget").disabled=!ready||learning||Boolean(lastState&&lastState.ir_ready&&!lastState.ir_count);
+  byId("setup-learn").disabled=!ready||learning||!lastState||!lastState.hardware_ready||!lastState.setup_ir_ready||lastState.setup_ir_count>=lastState.setup_ir_capacity;
   byId("setup-cancel").disabled=!ready||!lastState||!lastState.setup_ir_learning;
-  byId("setup-forget").disabled=!ready||learning;
+  byId("setup-forget").disabled=!ready||learning||Boolean(lastState&&lastState.setup_ir_ready&&!lastState.setup_ir_count);
+  document.querySelectorAll("[data-remove-group]").forEach(button=>button.disabled=!ready||learning);
 }
 function closePage(message){stopped=true;clearTimeout(refreshTimer);clearTimeout(activityTimer);byId("window").textContent="Closed";notice(message,true,true);controls()}
 async function request(path,body){
@@ -181,7 +190,26 @@ async function request(path,body){
   if(!response.ok)throw new Error(data.message||"The device could not complete this request.");
   return data;
 }
-function keyText(state,prefix,empty){return state[prefix+"learning"]?"Learning in progress":state[prefix+"enabled"]?state[prefix+"protocol"]+" / "+state[prefix+"address"].toString(16).toUpperCase()+" / "+state[prefix+"command"].toString(16).toUpperCase():empty}
+function keyText(state,prefix,empty){
+  if(state[prefix+"learning"])return "Learning in progress";
+  const count=state[prefix+"count"],capacity=state[prefix+"capacity"];
+  if(!count)return empty;
+  return count+" of "+capacity+" buttons saved"+(count>=capacity?". List full; remove a button to add another.":"");
+}
+function renderButtons(state,prefix,listId,group){
+  const list=byId(listId),buttons=state[prefix+"buttons"],signature=JSON.stringify(buttons);
+  if(list.dataset.signature===signature)return;
+  list.dataset.signature=signature;list.replaceChildren();
+  for(const saved of buttons){
+    const row=document.createElement("li"),info=document.createElement("div"),label=document.createElement("span"),code=document.createElement("code"),remove=document.createElement("button");
+    label.textContent="Button "+(saved.id+1);
+    code.textContent=saved.protocol+" / "+saved.address.toString(16).toUpperCase()+" / "+saved.command.toString(16).toUpperCase()+" ("+saved.bits+" bits)";
+    remove.type="button";remove.className="secondary";remove.textContent="Remove";
+    remove.setAttribute("aria-label","Remove "+group+" button "+(saved.id+1));
+    remove.dataset.removeGroup=group;remove.dataset.id=saved.id;remove.dataset.key=saved.key;
+    info.append(label,code);row.append(info,remove);list.append(row);
+  }
+}
 function render(state){
   lastState=state;token=state.token;if(!initialized){byId("ssid").value=state.ssid;initialized=true}
   byId("network").textContent=state.connected?"Connected to "+state.ssid:"Setup hotspot: "+state.ap_name;
@@ -191,12 +219,13 @@ function render(state){
   byId("default-password").hidden=!state.default_password;
   byId("ir-state").textContent=keyText(state,"ir_","No active unlock button");
   byId("setup-ir-state").textContent=keyText(state,"setup_ir_","No setup button saved");
+  renderButtons(state,"ir_","ir-buttons","door");renderButtons(state,"setup_ir_","setup-ir-buttons","setup");
   byId("ir-message").textContent=state.ir_event;byId("setup-ir-message").textContent=state.setup_ir_event;
   byId("hostname").textContent="Local address: http://"+state.hostname+"/";
   if(!state.hardware_ready)notice("Relay timer fault. Door release is disabled; check the hardware and restart.",true);
   else if(!state.settings_ready)notice("Settings storage needs attention. Save your settings to repair it.",true);
-  else if(!state.ir_ready)notice("Door button storage needs attention. Use Forget button, then learn again.",true);
-  else if(!state.setup_ir_ready)notice("Setup button storage needs attention. Use Forget setup button, then learn again.",true);
+  else if(!state.ir_ready)notice("Door button storage needs attention. Use Clear all door buttons, then learn again.",true);
+  else if(!state.setup_ir_ready)notice("Setup button storage needs attention. Use Clear all setup buttons, then learn again.",true);
   controls();
 }
 function unavailable(error){return error.message==="Failed to fetch"||error.name==="TimeoutError"?"Device unavailable. Press the saved setup button or restart, then select Retry.":error.message}
@@ -228,16 +257,29 @@ byId("settings-form").addEventListener("submit",async event=>{
   try{const data=await request("/api/settings",body.toString());stopped=true;clearTimeout(refreshTimer);clearTimeout(activityTimer);byId("wifi-password").value="";byId("setup-password").value="";notice(data.message+" Use http://"+lastState.hostname+"/ after reconnecting, or http://192.168.4.1/ on the setup hotspot.");byId("window").textContent="Restarting"}
   catch(error){notice(unavailable(error),true)}finally{busy=false;byId("save").removeAttribute("aria-busy");controls()}
 });
+async function buttonAction(button,path,body=""){
+  busy=true;button.setAttribute("aria-busy","true");controls();
+  try{await request(path,body);notice("");render(await request("/api/status"))}
+  catch(error){notice(unavailable(error),true);if(!stopped)try{render(await request("/api/status"))}catch{}}
+  finally{busy=false;button.removeAttribute("aria-busy");controls()}
+}
 for(const [prefix,route] of [["","/api/ir/"],["setup-","/api/setup-ir/"]])for(const action of ["learn","cancel","forget"]){
   const button=byId(prefix+action);
   button.addEventListener("click",async()=>{
     if(busy||stopped||!initialized)return;
-    if(action==="forget"&&!confirm(prefix?"Forget the setup button? Restart the device to configure another one if setup access is closed.":"Forget the door button? Infrared door release will be disabled."))return;
-    busy=true;button.setAttribute("aria-busy","true");controls();
-    try{await request(route+action,"");notice("");render(await request("/api/status"))}
-    catch(error){notice(unavailable(error),true)}finally{busy=false;button.removeAttribute("aria-busy");controls()}
+    if(action==="forget"&&!confirm(prefix?"Clear all setup buttons? Use the boot window to add new buttons if setup access closes.":"Clear all door buttons? Infrared door release will be disabled."))return;
+    await buttonAction(button,route+action);
   });
 }
+for(const id of ["ir-buttons","setup-ir-buttons"])byId(id).addEventListener("click",async event=>{
+  const button=event.target.closest("[data-remove-group]");
+  if(!button||button.disabled||busy||stopped||!initialized)return;
+  const group=button.dataset.removeGroup;
+  if(!confirm("Remove "+group+" button "+(Number(button.dataset.id)+1)+"? Other saved buttons will be retained."))return;
+  const body=new URLSearchParams({id:button.dataset.id,key:button.dataset.key});
+  await buttonAction(button,group==="door"?"/api/ir/remove":"/api/setup-ir/remove",body.toString());
+  if(!button.isConnected){const next=byId(id).querySelector("button")||byId(group==="door"?"learn":"setup-learn");next.focus({preventScroll:true})}
+});
 refresh();
 </script>
 </body>

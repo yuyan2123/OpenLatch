@@ -4,6 +4,7 @@
 namespace door {
 constexpr uint32_t kIrQuietMs = 500;
 constexpr uint32_t kIrLearnMs = 30000;
+constexpr uint8_t kIrMaxKeys = 16;
 
 // Stable storage IDs, independent of the IRremote library's enum ordering.
 enum class IrProtocol : uint16_t { None, Nec, Sony, Samsung, Rc5, Rc6, Jvc };
@@ -31,19 +32,42 @@ struct IrKey {
   }
 };
 enum class IrLoad { Empty, Loaded, Error };
+struct IrKeys {
+  IrKey entries[kIrMaxKeys]{};
+  void clear() { for (auto& key : entries) key = IrKey{}; }
+  uint8_t count() const {
+    uint8_t result = 0;
+    for (const auto& key : entries) if (key.valid()) ++result;
+    return result;
+  }
+  bool contains(const IrKey& input) const {
+    if (!input.valid()) return false;
+    for (const auto& key : entries) if (key == input) return true;
+    return false;
+  }
+  bool valid() const {
+    for (uint8_t i = 0; i < kIrMaxKeys; ++i) {
+      if (!entries[i].valid() && !(entries[i] == IrKey{})) return false;
+      if (entries[i].valid())
+        for (uint8_t j = 0; j < i; ++j) if (entries[i] == entries[j]) return false;
+    }
+    return true;
+  }
+};
 struct IrStorage {
   virtual ~IrStorage() = default;
-  virtual IrLoad load(IrKey& key) = 0;
-  // An invalid key writes a disabled record. Each update must be atomic.
-  virtual bool save(const IrKey& key) = 0;
+  virtual IrLoad load(IrKeys& keys) = 0;
+  // Save the whole list atomically; empty slots must be all zero.
+  virtual bool save(const IrKeys& keys) = 0;
 };
-enum class IrEvent { Ignored, Captured, Mismatch, Learned, Matched, StorageError, TimedOut };
+enum class IrEvent { Ignored, Captured, Mismatch, Learned, Duplicate, Matched, StorageError, TimedOut };
 inline const char* name(IrEvent event) {
   switch (event) {
     case IrEvent::Ignored: return "ignored";
     case IrEvent::Captured: return "captured";
     case IrEvent::Mismatch: return "mismatch";
     case IrEvent::Learned: return "learned";
+    case IrEvent::Duplicate: return "already_saved";
     case IrEvent::Matched: return "matched";
     case IrEvent::StorageError: return "storage_error";
     case IrEvent::TimedOut: return "timed_out";
@@ -55,16 +79,17 @@ class Infrared {
  public:
   explicit Infrared(IrStorage& storage) : storage_(storage) {}
   bool begin(uint32_t now) {
-    key_ = candidate_ = {};
+    keys_.clear(); candidate_ = {};
     learning_ = false;
     lastActivity_ = now;
-    const auto result = storage_.load(key_);
-    ready_ = result != IrLoad::Error && (result != IrLoad::Loaded || key_.valid());
-    if (result != IrLoad::Loaded || !ready_) key_ = {};
+    const auto result = storage_.load(keys_);
+    ready_ = result != IrLoad::Error && keys_.valid() &&
+             ((result == IrLoad::Loaded) == (keys_.count() > 0));
+    if (!ready_) keys_.clear();
     return ready_;
   }
   bool learn(uint32_t now) {
-    if (!ready_) return false;
+    if (!ready_ || count() >= kIrMaxKeys) return false;
     learning_ = true;
     candidate_ = {};
     startedAt_ = lastActivity_ = now;
@@ -76,12 +101,15 @@ class Infrared {
     lastActivity_ = now;
   }
   bool forget(uint32_t now) {
-    cancel(now);
-    key_ = {};
-    // A verified tombstone also repairs a corrupt credential without touching
-    // Wi-Fi or HomeKit pairing data in other NVS namespaces.
-    ready_ = storage_.save(key_);
-    return ready_;
+    // An empty verified list also repairs corrupt storage in this namespace.
+    const IrKeys empty;
+    return persist(now, empty);
+  }
+  bool remove(uint32_t now, uint8_t slot) {
+    if (!ready_ || learning_ || slot >= kIrMaxKeys || !keys_.entries[slot].valid()) return false;
+    IrKeys next = keys_;
+    next.entries[slot] = {};
+    return persist(now, next);
   }
   bool tick(uint32_t now) {
     if (!learning_ || uint32_t(now - startedAt_) < kIrLearnMs) return false;
@@ -102,27 +130,40 @@ class Infrared {
         return IrEvent::Captured;
       }
       if (!(input == candidate_)) return IrEvent::Mismatch;
-      // Persist before enabling the new key; never unlock on a learning frame.
-      if (!storage_.save(candidate_)) {
-        ready_ = false;
-        key_ = {};
+      if (keys_.contains(candidate_)) {
         cancel(now);
-        return IrEvent::StorageError;
+        return IrEvent::Duplicate;
       }
-      key_ = candidate_;
-      cancel(now);
-      return IrEvent::Learned;
+      IrKeys next = keys_;
+      for (auto& key : next.entries) if (!key.valid()) { key = candidate_; break; }
+      // Persist before enabling any new key; learning frames never release.
+      return persist(now, next) ? IrEvent::Learned : IrEvent::StorageError;
     }
-    return enabled() && input == key_ ? IrEvent::Matched : IrEvent::Ignored;
+    return enabled() && contains(input) ? IrEvent::Matched : IrEvent::Ignored;
   }
   bool ready() const { return ready_; }
   bool learning() const { return learning_; }
-  bool enabled() const { return ready_ && !learning_ && key_.valid(); }
-  const IrKey& key() const { return key_; }
+  bool enabled() const { return ready_ && !learning_ && count() > 0; }
+  uint8_t count() const { return keys_.count(); }
+  bool contains(const IrKey& input) const { return keys_.contains(input); }
+  const IrKey& at(uint8_t slot) const { return keys_.entries[slot < kIrMaxKeys ? slot : 0]; }
+  // First saved key for legacy status consumers. List APIs expose every slot.
+  const IrKey& key() const {
+    for (const auto& key : keys_.entries) if (key.valid()) return key;
+    return keys_.entries[0];
+  }
 
  private:
   IrStorage& storage_;
-  IrKey key_{}, candidate_{};
+  IrKeys keys_{};
+  IrKey candidate_{};
+  bool persist(uint32_t now, const IrKeys& next) {
+    ready_ = storage_.save(next);
+    if (ready_) keys_ = next;
+    else keys_.clear();
+    cancel(now);
+    return ready_;
+  }
   uint32_t startedAt_ = 0, lastActivity_ = 0;
   bool ready_ = false, learning_ = false;
 };

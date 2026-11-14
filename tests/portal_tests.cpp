@@ -3,9 +3,10 @@
 #include "../firmware/DoorRelease/SetupPortal.h"
 #define CHECK(x) do { if (!(x)) { std::cerr << __func__ << ':' << __LINE__ << " failed: " #x "\n"; std::exit(1); } } while (0)
 struct MemoryIr : door::IrStorage {
-  door::IrKey key{};
-  door::IrLoad load(door::IrKey& out) override { out = key; return key.valid() ? door::IrLoad::Loaded : door::IrLoad::Empty; }
-  bool save(const door::IrKey& input) override { key = input; return true; }
+  door::IrKeys keys{};
+  bool failSave = false;
+  door::IrLoad load(door::IrKeys& out) override { out = keys; return keys.count() ? door::IrLoad::Loaded : door::IrLoad::Empty; }
+  bool save(const door::IrKeys& input) override { if (failSave) return false; keys = input; return true; }
 };
 struct Fixture {
   door::DeviceSettings settings{};
@@ -39,13 +40,13 @@ void authentication_and_request_guards() {
   Fixture f; CHECK(WiFi.ap); CHECK(fakeWeb->active); CHECK(fakeWeb->port == 80);
   CHECK(WiFi.apPassword == door::kDefaultSetupPassword);
   fakeWeb->request("/"); CHECK(fakeWeb->code == 200); CHECK(!fakeWeb->authenticated);
-  CHECK(fakeWeb->body.find("Learn button") != std::string::npos);
+  CHECK(fakeWeb->body.find("Add door button") != std::string::npos);
   fakeWeb->request("/api/status"); CHECK(fakeWeb->code == 200);
   CHECK(fakeWeb->body.find("wifiPassword") == std::string::npos);
   CHECK(fakeWeb->body.find(door::kDefaultSetupPassword) == std::string::npos);
   CHECK(fakeWeb->outputHeaders["Cache-Control"] == "no-store");
   fakeWeb->request("/api/ir/learn", HTTP_POST); CHECK(fakeWeb->code == 403);
-  for (const auto* route : {"/api/setup-ir/learn", "/api/setup-ir/cancel", "/api/setup-ir/forget", "/api/activity"}) {
+  for (const auto* route : {"/api/setup-ir/learn", "/api/setup-ir/cancel", "/api/setup-ir/forget", "/api/ir/remove", "/api/setup-ir/remove", "/api/activity"}) {
     fakeWeb->request(route, HTTP_POST); CHECK(fakeWeb->code == 403); CHECK(!f.setupIr.learning());
     fakeWeb->request(route, HTTP_GET); CHECK(fakeWeb->code == 302); CHECK(!f.setupIr.learning());
   }
@@ -115,7 +116,7 @@ void setup_button_learning_and_reopening() {
   const door::IrKey doorButton{door::IrProtocol::Nec, 1, 2, 32};
   const door::IrKey setupButton{door::IrProtocol::Nec, 1, 3, 32};
   fakeMillis = 3000;
-  f.irStore.key = doorButton; CHECK(f.ir.begin(fakeMillis));
+  f.irStore.keys.entries[0] = doorButton; CHECK(f.ir.begin(fakeMillis));
   f.controller.connectivity(fakeMillis, true, true); f.relay.permit(true);
   fakeWeb->request("/api/setup-ir/learn", HTTP_POST); CHECK(fakeWeb->code == 200);
   CHECK(f.setupIr.learning()); CHECK(f.portal.irLearning());
@@ -172,9 +173,61 @@ void activity_and_status_polling() {
   fakeWeb->request("/api/activity", HTTP_POST); CHECK(fakeWeb->code == 410);
   f.portal.poll(); CHECK(!fakeWeb->active);
 }
+void multiple_buttons_removal_and_conflicts() {
+  Fixture f; f.token();
+  const door::IrKey a{door::IrProtocol::Nec, 1, 2, 32}, b{door::IrProtocol::Nec, 1, 3, 32};
+  const door::IrKey s1{door::IrProtocol::Nec, 1, 4, 32}, s2{door::IrProtocol::Nec, 1, 5, 32};
+  f.irStore.keys.entries[0] = a; f.irStore.keys.entries[1] = b;
+  f.setupIrStore.keys.entries[0] = s1; f.setupIrStore.keys.entries[1] = s2;
+  CHECK(f.ir.begin(0)); CHECK(f.setupIr.begin(0));
+  fakeWeb->request("/api/status"); CHECK(fakeWeb->body.find("\"ir_count\":2") != std::string::npos);
+  CHECK(fakeWeb->body.find("\"setup_ir_count\":2") != std::string::npos);
+  CHECK(fakeWeb->body.find("\"key\":\"NEC:1:3:32\"") != std::string::npos);
+  fakeWeb->request("/api/ir/remove", HTTP_POST); CHECK(fakeWeb->code == 400); CHECK(f.ir.count() == 2);
+  for (const auto* id : {"", "-1", "x", "100", "16"}) {
+    fakeWeb->arguments = {{"id", id}, {"key", "NEC:1:2:32"}};
+    fakeWeb->request("/api/ir/remove", HTTP_POST); CHECK(fakeWeb->code == 400 || fakeWeb->code == 404);
+    CHECK(f.ir.count() == 2);
+  }
+  fakeWeb->arguments = {{"id", "1"}, {"key", "NEC:1:2:32"}};
+  fakeWeb->request("/api/ir/remove", HTTP_POST); CHECK(fakeWeb->code == 409); CHECK(f.ir.count() == 2);
+  fakeWeb->arguments["key"] = "NEC:1:3:32";
+  fakeWeb->request("/api/ir/remove", HTTP_POST); CHECK(fakeWeb->code == 200);
+  CHECK(f.ir.count() == 1); CHECK(f.ir.contains(a)); CHECK(!f.ir.contains(b)); CHECK(f.setupIr.count() == 2);
+  fakeWeb->request("/api/ir/remove", HTTP_POST); CHECK(fakeWeb->code == 404);
+  fakeMillis = 3000; fakeWeb->request("/api/ir/learn", HTTP_POST); CHECK(f.ir.learning());
+  fakeMillis += 500; f.portal.receiveIr(fakeMillis, s2); CHECK(f.ir.learning());
+  CHECK(f.ir.count() == 1);  // A setup button in slot 1 must also be excluded.
+  fakeWeb->request("/api/setup-ir/remove", HTTP_POST); CHECK(fakeWeb->code == 409);
+  fakeMillis += 500; f.portal.receiveIr(fakeMillis, b);
+  fakeMillis += 500; CHECK(f.portal.receiveIr(fakeMillis, b) == door::IrEvent::Learned);
+  CHECK(f.ir.count() == 2); CHECK(f.ir.contains(a)); CHECK(f.ir.contains(b)); CHECK(!fakeGpio);
+  fakeWeb->request("/api/setup-ir/learn", HTTP_POST); CHECK(f.setupIr.learning());
+  fakeMillis += 500; f.portal.receiveIr(fakeMillis, b); CHECK(f.setupIr.learning()); CHECK(f.setupIr.count() == 2);
+  fakeWeb->request("/api/setup-ir/cancel", HTTP_POST);
+  fakeWeb->arguments = {{"id", "0"}, {"key", "NEC:1:4:32"}};
+  fakeWeb->request("/api/setup-ir/remove", HTTP_POST); CHECK(fakeWeb->code == 200);
+  CHECK(f.setupIr.count() == 1); CHECK(f.setupIr.contains(s2)); CHECK(f.ir.count() == 2);
+  f.irStore.failSave = true;
+  fakeWeb->arguments = {{"id", "0"}, {"key", "NEC:1:2:32"}};
+  fakeWeb->request("/api/ir/remove", HTTP_POST); CHECK(fakeWeb->code == 500);
+  CHECK(!f.ir.ready()); CHECK(!fakeGpio); CHECK(f.setupIr.count() == 1);
+}
+void full_button_list_is_rejected() {
+  Fixture f; f.token();
+  for (uint16_t slot = 0; slot < door::kIrMaxKeys; ++slot) {
+    f.irStore.keys.entries[slot] = {door::IrProtocol::Nec, 1, slot, 32};
+    f.setupIrStore.keys.entries[slot] = {door::IrProtocol::Nec, 2, slot, 32};
+  }
+  CHECK(f.ir.begin(0)); CHECK(f.setupIr.begin(0));
+  fakeWeb->request("/api/ir/learn", HTTP_POST); CHECK(fakeWeb->code == 409); CHECK(!f.ir.learning());
+  fakeWeb->request("/api/setup-ir/learn", HTTP_POST); CHECK(fakeWeb->code == 409); CHECK(!f.setupIr.learning());
+  CHECK(f.ir.count() == 16); CHECK(f.setupIr.count() == 16);
+}
 int main() {
   authentication_and_request_guards(); browser_learning_and_forget();
   expiry_and_late_offline_recovery(); save_validation_and_restart();
   setup_button_learning_and_reopening(); activity_and_status_polling();
+  multiple_buttons_removal_and_conflicts(); full_button_list_is_rejected();
   std::cout << "PASS: no-login routes, CSRF guards, independent IR buttons, activity windows, AP recovery and save/restart.\n";
 }

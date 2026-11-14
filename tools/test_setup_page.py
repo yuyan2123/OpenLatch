@@ -40,7 +40,9 @@ def reset():
                  ir_event="Ready. Start learning to register an unlock button.",
                  setup_ir_ready=True, setup_ir_learning=False, setup_ir_enabled=False,
                  setup_ir_protocol="none", setup_ir_address=0, setup_ir_command=0,
-                 setup_ir_event="Not set. Learn a setup button here during the boot window.")
+                 setup_ir_event="Not set. Learn a setup button here during the boot window.",
+                 ir_count=0, ir_capacity=16, ir_buttons=[],
+                 setup_ir_count=0, setup_ir_capacity=16, setup_ir_buttons=[])
     REQUESTS.clear()
     SAVE_FAILURE = EXPIRED = False
 
@@ -83,7 +85,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("X-Setup-Token") != STATE["token"]:
             self.reply(403, {"message": "Invalid setup token."})
             return
-        REQUESTS.append((self.path, parse_qs(body, keep_blank_values=True)))
+        arguments = parse_qs(body, keep_blank_values=True)
+        REQUESTS.append((self.path, arguments))
         if self.path == "/api/activity":
             STATE["remaining_seconds"] = 600
             self.reply(200, {"message": "Setup access extended."})
@@ -91,18 +94,31 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/settings":
             self.reply(500 if SAVE_FAILURE else 200, {"message": "Storage unavailable. Retry saving." if SAVE_FAILURE else "Settings saved. Restarting now."})
             return
+        if self.path in ("/api/ir/remove", "/api/setup-ir/remove"):
+            prefix = "ir_" if self.path == "/api/ir/remove" else "setup_ir_"
+            slot = int(arguments["id"][0])
+            saved = next((button for button in STATE[prefix+"buttons"] if button["id"] == slot), None)
+            if not saved or saved["key"] != arguments["key"][0]:
+                self.reply(409, {"message": "Button changed. Refresh the list and try again."})
+                return
+            STATE[prefix+"buttons"] = [button for button in STATE[prefix+"buttons"] if button["id"] != slot]
+            STATE[prefix+"count"] = len(STATE[prefix+"buttons"])
+            STATE[prefix+"enabled"] = bool(STATE[prefix+"count"])
+            STATE[prefix+"event"] = "Button removed. Other saved buttons retained."
+            self.reply(200, {"message": STATE[prefix+"event"]})
+            return
         if self.path == "/api/ir/learn":
             STATE.update(ir_learning=True, ir_enabled=False, ir_event="Learning started. Press the same button twice.")
         elif self.path == "/api/ir/cancel":
             STATE.update(ir_learning=False, ir_event="Learning cancelled.")
         elif self.path == "/api/ir/forget":
-            STATE.update(ir_learning=False, ir_enabled=False, ir_event="Button forgotten.")
+            STATE.update(ir_learning=False, ir_enabled=False, ir_count=0, ir_buttons=[], ir_event="All door buttons cleared.")
         elif self.path == "/api/setup-ir/learn":
             STATE.update(setup_ir_learning=True, setup_ir_enabled=False, setup_ir_event="Press the setup button twice.")
         elif self.path == "/api/setup-ir/cancel":
             STATE.update(setup_ir_learning=False, setup_ir_event="Learning cancelled.")
         elif self.path == "/api/setup-ir/forget":
-            STATE.update(setup_ir_learning=False, setup_ir_enabled=False, setup_ir_event="Setup button forgotten.")
+            STATE.update(setup_ir_learning=False, setup_ir_enabled=False, setup_ir_count=0, setup_ir_buttons=[], setup_ir_event="All setup buttons cleared.")
         else:
             self.reply(404, {"message": "Not found."})
             return
@@ -118,6 +134,11 @@ def wait_js(page, expression):
             return
         page.wait_for_timeout(100)
     raise AssertionError("Timed out waiting for: " + expression)
+
+
+def saved_button(slot, command, address=0x1234):
+    return dict(id=slot, protocol="NEC", address=address, command=command, bits=32,
+                key=f"NEC:{address}:{command}:32")
 
 
 def main():
@@ -166,9 +187,16 @@ def main():
             page.locator("#learn").click()
             wait_js(page, "document.querySelector('#ir-state').textContent === 'Learning in progress'")
             STATE.update(ir_learning=False, ir_enabled=True, ir_protocol="NEC", ir_address=0x1234,
-                         ir_command=0x45, ir_event="Button learned and saved.")
+                         ir_command=0x45, ir_event="Button learned and saved.",
+                         ir_count=2, ir_buttons=[saved_button(0, 0x45), saved_button(1, 0x46)])
             wait_js(page, "document.querySelector('#ir-message').textContent === 'Button learned and saved.'")
-            assert page.locator("#ir-state").inner_text() == "NEC / 1234 / 45"
+            assert page.locator("#ir-state").inner_text() == "2 of 16 buttons saved"
+            assert page.locator("#ir-buttons li").count() == 2
+            page.get_by_role("button", name="Remove door button 2", exact=True).click()
+            wait_js(page, "document.querySelectorAll('#ir-buttons li').length === 1")
+            assert STATE["ir_buttons"] == [saved_button(0, 0x45)]
+            removal = [data for path, data in REQUESTS if path == "/api/ir/remove"][-1]
+            assert removal == {"id": ["1"], "key": ["NEC:4660:70:32"]}
             page.locator("#forget").click()
             wait_js(page, "document.querySelector('#ir-state').textContent === 'No active unlock button'")
             page.locator("#setup-learn").click()
@@ -182,8 +210,28 @@ def main():
             wait_js(page, "document.querySelector('#setup-ir-state').textContent === 'Learning in progress'")
             STATE.update(setup_ir_learning=False, setup_ir_enabled=True, setup_ir_protocol="NEC",
                          setup_ir_address=0x1234, setup_ir_command=0x46,
-                         setup_ir_event="Setup button saved.")
-            wait_js(page, "document.querySelector('#setup-ir-state').textContent === 'NEC / 1234 / 46'")
+                         setup_ir_event="Setup button saved.", setup_ir_count=2,
+                         setup_ir_buttons=[saved_button(0, 0x47), saved_button(2, 0x48)])
+            wait_js(page, "document.querySelector('#setup-ir-state').textContent === '2 of 16 buttons saved'")
+            STATE.update(ir_count=2, ir_enabled=True, ir_event="Door buttons saved.",
+                         ir_buttons=[saved_button(0, 0x45), saved_button(1, 0x46)])
+            wait_js(page, "document.querySelectorAll('#ir-buttons li').length === 2")
+            page.set_viewport_size({"width": 1280, "height": 900})
+            page.screenshot(path=str(output / "setup-multi-desktop.png"), full_page=True)
+            page.set_viewport_size({"width": 390, "height": 844})
+            page.screenshot(path=str(output / "setup-multi-mobile.png"), full_page=True)
+            page.get_by_role("button", name="Remove setup button 3", exact=True).click()
+            wait_js(page, "document.querySelectorAll('#setup-ir-buttons li').length === 1")
+            assert STATE["setup_ir_buttons"] == [saved_button(0, 0x47)]
+            # Full lists remain readable and removable on the smallest screen.
+            STATE.update(setup_ir_count=16, setup_ir_buttons=[saved_button(i, 0x50+i) for i in range(16)])
+            wait_js(page, "document.querySelectorAll('#setup-ir-buttons li').length === 16")
+            assert page.locator("#setup-learn").is_disabled()
+            assert "List full" in page.locator("#setup-ir-state").inner_text()
+            page.set_viewport_size({"width": 320, "height": 844})
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            assert page.get_by_role("button", name="Remove setup button 16", exact=True).is_enabled()
+            page.set_viewport_size({"width": 390, "height": 844})
             page.locator("#setup-forget").click()
             wait_js(page, "document.querySelector('#setup-ir-state').textContent === 'No setup button saved'")
             STATE.update(connected=False, ap=True, remaining_seconds=0)
@@ -226,7 +274,7 @@ def main():
             assert page.locator("#ssid").input_value() == "Keep this unsaved edit"
             assert not errors, errors
             browser.close()
-        print("PASS: Chrome without credentials; 320/390/768/1280/1920 layouts, activity-only renewal, both IR controls, recovery, save/restart and expiry/reopen.")
+        print("PASS: Chrome without credentials; five responsive widths, multi-button lists/removal, full-capacity mobile layout, activity renewal, recovery and save/restart.")
         print("Screenshots: build/setup-desktop.png and build/setup-mobile.png")
     finally:
         server.shutdown()

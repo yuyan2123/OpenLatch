@@ -1,14 +1,14 @@
 # Infrared learning and door release
 
-Current build: **1.2.0-gpiofix-200ms**. GPIO4 is explicitly configured as a
+Current build: **1.2.2-multi-ir**. GPIO4 is explicitly configured as a
 GPIO output with drive strength 3; the default release pulse is **200 ms**.
-The original English setup page and Digest login are retained.
+The English setup page supports multiple buttons. Digest login is temporarily disabled.
 
-Firmware 1.2.0 supports one locally enrolled unlock button. All firmware identifiers,
+The firmware supports up to 16 door buttons and 16 setup-access buttons. All firmware identifiers,
 comments and messages are English. No key is enrolled by default. Enrollment is
-available through the authenticated setup website or optional local USB serial
+available through the setup website or optional local USB serial
 commands, never through the remote. See [web setup](web_setup.md) for Wi-Fi/AP
-access, login and the ten-minute window with persistent offline recovery.
+access and the ten-minute idle window with persistent offline recovery.
 
 Connect receiver VCC to ESP32 3V3, GND to GND and S to GPIO3. Verify the pin
 markings on the actual receiver. The relay still uses GPIO4 and the existing
@@ -19,7 +19,8 @@ markings on the actual receiver. The relay still uses GPIO4 and the existing
 1. Upload the firmware, then open its setup website using your phone on the
    local Wi-Fi or setup AP. Keep relay COM/NO/NC disconnected during bench setup.
    No `secrets.h`, internet connection or HomeKit pairing is required for IR.
-2. Select **Learn button** (or send `ir learn` over optional USB at 115200 baud).
+2. Select **Add door button** (or send `ir learn` over optional USB at 115200 baud).
+   Use **Add setup button** for a button that opens the website without a door pulse.
    Both HomeKit and infrared release are inhibited during
    enrollment, and any current pulse stops. Release all remote buttons for at
    least **500 ms**, then briefly press the intended button.
@@ -28,8 +29,9 @@ markings on the actual receiver. The relay still uses GPIO4 and the existing
    button reports `mismatch`; the first candidate remains selected.
 4. **Button learned and saved** (`ir_learning: learned` on USB) confirms the new button was
    committed and read back from NVS. Neither enrollment press opens the door.
-   A replacement becomes active only after successful storage. Cancel or timeout
-   retains the previous key. A storage failure disables IR until successfully
+   An additional button becomes active only after successful storage. Cancel or timeout
+   retains all saved keys. A duplicate consumes no slot; a button already used
+   for the other action is rejected. A storage failure disables that list until successfully
    cleared or reloaded after reboot.
 5. Release the button, then press again to request a **200 ms** relay pulse.
    Observe the **3 second boot guard** and **2 second cooldown** after stopping.
@@ -40,12 +42,14 @@ markings on the actual receiver. The relay still uses GPIO4 and the existing
 | USB command | Action |
 | --- | --- |
 | `ir help` | List commands. |
-| `ir status` | Show hardware/storage status, enrolled key and learning/enable state. |
-| `ir learn` | Start/restart enrollment of one unlock button. |
-| `ir cancel` | Cancel enrollment and retain the previous key. |
-| `ir forget` | Commit a disabled record and clear the key; repair corrupt IR storage. |
+| `ir status` | Show hardware/storage status, the first door key, list counts and learning/enable state. |
+| `ir learn` | Start/restart enrollment of an additional door button. |
+| `ir cancel` | Cancel enrollment and retain all saved buttons. |
+| `ir forget` | Clear all door buttons; repair corrupt door IR storage. |
 
-The website also provides **Cancel learning** and **Forget button**. There is no
+The website provides **Cancel learning**, per-row **Remove**, and
+**Clear all door buttons** / **Clear all setup buttons**. Remove and clear actions
+ask for confirmation. There is no
 HTTP or serial command that directly energizes the relay. USB commands are case
 sensitive and must match exactly. Malformed or oversized lines are discarded.
 HomeSpan's own serial command parser stays disabled.
@@ -81,9 +85,12 @@ provide cryptographic authentication.
 
 ## Storage and troubleshooting
 
-The `door_ir` NVS namespace contains a single versioned, CRC32-protected `key`
-blob, independent of HomeKit pairing. Unknown versions, invalid keys, wrong
-lengths and checksum failures disable IR. `ir forget` writes a disabled record
+The `door_ir` and `door_setup_ir` NVS namespaces each contain one versioned,
+CRC32-protected `key` blob, independent of HomeKit pairing. Version 2 stores
+16 fixed slots (136 bytes); version 1's single button loads into slot 0 without
+rewriting flash and upgrades on the next successful change. Unknown versions,
+invalid or duplicate keys, wrong lengths and checksum failures disable that list.
+`ir forget` writes an empty door list
 and can repair that blob without erasing Wi-Fi or HomeKit data. CRC32 detects
 accidental corruption; it is not authentication or encryption.
 

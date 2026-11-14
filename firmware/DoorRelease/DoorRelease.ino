@@ -93,6 +93,8 @@ void irStatus() {
                 key.valid() ? "yes" : "no", infrared.learning() ? "yes" : "no",
                 hardwareReady && infrared.enabled() && !controller.faulted() ? "yes" : "no",
                 door::name(key.protocol), key.address, key.command, key.bits);
+  Serial.printf("ir_buttons: door=%u/%u setup=%u/%u\n", infrared.count(), door::kIrMaxKeys,
+                setupInfrared.count(), door::kIrMaxKeys);
 }
 
 void serialCommand(const char* command) {
@@ -206,7 +208,7 @@ void setup() {
   new Characteristic::Manufacturer("DIY");
   new Characteristic::Model("ESP32-C3 SuperMini");
   new Characteristic::SerialNumber("door-release-001");
-  new Characteristic::FirmwareRevision("1.2.1-ir-setup");
+  new Characteristic::FirmwareRevision("1.2.2-multi-ir");
   new ReleaseSwitch();
 }
 

@@ -39,11 +39,13 @@ class SetupPortal {
     });
     server_.on("/api/settings", HTTP_POST, [this]() { if (authorize(true)) saveSettings(); });
     server_.on("/api/ir/learn", HTTP_POST, [this]() { if (authorize(true)) learn(); });
+    server_.on("/api/ir/remove", HTTP_POST, [this]() { if (authorize(true)) removeButton(false); });
+    server_.on("/api/setup-ir/remove", HTTP_POST, [this]() { if (authorize(true)) removeButton(true); });
     server_.on("/api/ir/cancel", HTTP_POST, [this]() {
       if (!authorize(true)) return;
       infrared_.cancel(millis());
       controller_.inhibit(millis(), irLearning());
-      lastIrEvent_ = "Learning cancelled. Previous button retained.";
+      lastIrEvent_ = "Learning cancelled. Saved buttons retained.";
       message(200, lastIrEvent_);
     });
     server_.on("/api/ir/forget", HTTP_POST, [this]() {
@@ -52,25 +54,26 @@ class SetupPortal {
       relay_.permitInfrared(false);
       const bool saved = infrared_.forget(millis());
       controller_.inhibit(millis(), false);
-      lastIrEvent_ = saved ? "Button forgotten. Infrared release is disabled." :
+      lastIrEvent_ = saved ? "All door buttons cleared. Infrared release is disabled." :
                             "Erase failed. Infrared is disabled now; the stored button may return after reboot. Retry Forget button.";
       message(saved ? 200 : 500, lastIrEvent_);
     });
     server_.on("/api/setup-ir/learn", HTTP_POST, [this]() {
       if (!authorize(true)) return;
+      if (setupInfrared_.count() >= door::kIrMaxKeys) { message(409, "Setup button list is full. Remove a button before adding another."); return; }
       if (irLearning() || !hardwareReady_ || controller_.faulted() || !setupInfrared_.learn(millis())) {
         message(409, "Learning is unavailable. Finish learning or check hardware and storage."); return;
       }
       controller_.inhibit(millis(), true);
       relay_.permitInfrared(false);
-      lastSetupIrEvent_ = "Release for 500 ms, then press a different button from the door button twice within 30 seconds.";
+      lastSetupIrEvent_ = "Release for 500 ms, then press a new setup button twice within 30 seconds. Saved buttons are retained.";
       message(200, lastSetupIrEvent_);
     });
     server_.on("/api/setup-ir/cancel", HTTP_POST, [this]() {
       if (!authorize(true)) return;
       setupInfrared_.cancel(millis());
       controller_.inhibit(millis(), irLearning());
-      lastSetupIrEvent_ = "Learning cancelled. Previous setup button retained.";
+      lastSetupIrEvent_ = "Learning cancelled. Saved setup buttons retained.";
       message(200, lastSetupIrEvent_);
     });
     server_.on("/api/setup-ir/forget", HTTP_POST, [this]() {
@@ -78,7 +81,7 @@ class SetupPortal {
       if (infrared_.learning()) { message(409, "Cancel door button learning first."); return; }
       const bool saved = setupInfrared_.forget(millis());
       controller_.inhibit(millis(), irLearning());
-      lastSetupIrEvent_ = saved ? "Setup button forgotten. Use the boot window to learn a new button." :
+      lastSetupIrEvent_ = saved ? "All setup buttons cleared. Use the boot window to learn new buttons." :
                                  "Erase failed. Setup button disabled; retry before restarting.";
       message(saved ? 200 : 500, lastSetupIrEvent_);
     });
@@ -106,7 +109,7 @@ class SetupPortal {
   door::IrEvent receiveIr(uint32_t now, const door::IrKey& input, bool repeat = false, bool invalid = false) {
     const bool doorLearning = infrared_.learning(), setupLearning = setupInfrared_.learning();
     const bool conflict = !invalid && !repeat && input.valid() &&
-        ((doorLearning && input == setupInfrared_.key()) || (setupLearning && input == infrared_.key()));
+        ((doorLearning && setupInfrared_.contains(input)) || (setupLearning && infrared_.contains(input)));
     const auto setupEvent = setupInfrared_.receive(now, input, repeat, invalid || conflict || doorLearning || restarting_);
     const auto event = infrared_.receive(now, input, repeat, invalid || conflict || setupLearning || restarting_);
     noteIrEvent(event);
@@ -128,9 +131,10 @@ class SetupPortal {
     switch (event) {
       case door::IrEvent::Captured: lastIrEvent_ = "First press captured. Release for 500 ms, then press the same button again."; break;
       case door::IrEvent::Mismatch: lastIrEvent_ = "Different button received. Press the first button again after releasing for 500 ms."; break;
-      case door::IrEvent::Learned: lastIrEvent_ = "Button learned and saved. Release, then press again to open."; break;
-      case door::IrEvent::StorageError: lastIrEvent_ = "Storage verification failed. Infrared is disabled. Use Forget button to repair."; break;
-      case door::IrEvent::TimedOut: lastIrEvent_ = "Learning timed out. Previous button retained."; break;
+      case door::IrEvent::Learned: lastIrEvent_ = "Button learned and saved. Existing buttons retained. Release, then press again to open."; break;
+      case door::IrEvent::Duplicate: lastIrEvent_ = "This button is already saved. No duplicate added."; break;
+      case door::IrEvent::StorageError: lastIrEvent_ = "Storage verification failed. Infrared is disabled. Use Clear all door buttons to repair."; break;
+      case door::IrEvent::TimedOut: lastIrEvent_ = "Learning timed out. Saved buttons retained."; break;
       default: break;
     }
   }
@@ -140,9 +144,10 @@ class SetupPortal {
     switch (event) {
       case door::IrEvent::Captured: lastSetupIrEvent_ = "First press captured. Release for 500 ms, then press the same button again."; break;
       case door::IrEvent::Mismatch: lastSetupIrEvent_ = "Different button received. Press the first button again after releasing for 500 ms."; break;
-      case door::IrEvent::Learned: lastSetupIrEvent_ = "Setup button saved. A later press opens setup access for 10 minutes."; break;
-      case door::IrEvent::StorageError: lastSetupIrEvent_ = "Setup button storage failed. Use Forget button, then learn again."; break;
-      case door::IrEvent::TimedOut: lastSetupIrEvent_ = "Learning timed out. Previous setup button retained."; break;
+      case door::IrEvent::Learned: lastSetupIrEvent_ = "Setup button saved. Existing buttons retained. A later press opens setup access for 10 minutes."; break;
+      case door::IrEvent::Duplicate: lastSetupIrEvent_ = "This setup button is already saved. No duplicate added."; break;
+      case door::IrEvent::StorageError: lastSetupIrEvent_ = "Setup button storage failed. Use Clear all setup buttons, then learn again."; break;
+      case door::IrEvent::TimedOut: lastSetupIrEvent_ = "Learning timed out. Saved setup buttons retained."; break;
       default: break;
     }
   }
@@ -251,11 +256,52 @@ class SetupPortal {
       policy_.noteActivity(millis());
     server_.send( code, "application/json", String("{\"message\":") + quoted(text) + "}");
   }
+  static String fingerprint(const door::IrKey& key) {
+    return String(door::name(key.protocol)) + ":" + String(key.address) + ":" +
+           String(key.command) + ":" + String(key.bits);
+  }
+  static String buttonList(const door::Infrared& ir) {
+    String json = "[";
+    bool first = true;
+    for (uint8_t slot = 0; slot < door::kIrMaxKeys; ++slot) {
+      const auto& key = ir.at(slot);
+      if (!key.valid()) continue;
+      if (!first) json += ",";
+      first = false;
+      json += String("{\"id\":") + String(slot) + ",\"protocol\":" + quoted(door::name(key.protocol));
+      json += ",\"address\":" + String(key.address) + ",\"command\":" + String(key.command);
+      json += ",\"bits\":" + String(key.bits) + ",\"key\":" + quoted(fingerprint(key)) + "}";
+    }
+    return json + "]";
+  }
+  void removeButton(bool setup) {
+    if (irLearning()) { message(409, "Finish or cancel button learning before removing a button."); return; }
+    const String id = server_.arg("id");
+    if (!id.length() || id.length() > 2 || !server_.hasArg("key")) { message(400, "Missing or invalid button ID and key."); return; }
+    uint8_t slot = 0;
+    for (size_t i = 0; i < id.length(); ++i) {
+      if (id[i] < '0' || id[i] > '9') { message(400, "Invalid button ID."); return; }
+      slot = slot * 10 + uint8_t(id[i] - '0');
+    }
+    auto& ir = setup ? setupInfrared_ : infrared_;
+    if (slot >= door::kIrMaxKeys || !ir.at(slot).valid()) { message(404, "Button no longer exists. Refresh the list."); return; }
+    // Prevent a stale browser from removing a different button in a reused slot.
+    if (server_.arg("key") != fingerprint(ir.at(slot))) { message(409, "Button changed. Refresh the list and try again."); return; }
+    controller_.inhibit(millis(), true);
+    relay_.permitInfrared(false);
+    const bool saved = ir.remove(millis(), slot);
+    controller_.inhibit(millis(), false);
+    const char* result = saved ? "Button removed. Other saved buttons retained." :
+        "Storage verification failed. This button list is disabled; clear it to repair before learning again.";
+    if (setup) lastSetupIrEvent_ = result;
+    else lastIrEvent_ = result;
+    message(saved ? 200 : 500, result);
+  }
   void status() {
     const bool connected = WiFi.status() == WL_CONNECTED;
     const auto& key = infrared_.key();
     String json;
-    json.reserve(1000);
+    json.reserve(5200);
     json = String("{\"token\":") + quoted(token_) + ",\"ssid\":" + quoted(settings_.ssid);
     json += String(",\"connected\":") + (connected ? "true" : "false");
     json += String(",\"ap\":") + (apActive_ ? "true" : "false");
@@ -274,6 +320,8 @@ class SetupPortal {
     json += ",\"ir_address\":" + String(key.address);
     json += ",\"ir_command\":" + String(key.command);
     json += ",\"ir_event\":" + quoted(lastIrEvent_);
+    json += ",\"ir_count\":" + String(infrared_.count()) + ",\"ir_capacity\":" + String(door::kIrMaxKeys);
+    json += ",\"ir_buttons\":" + buttonList(infrared_);
     const auto& setupKey = setupInfrared_.key();
     json += String(",\"setup_ir_ready\":") + (setupInfrared_.ready() ? "true" : "false");
     json += String(",\"setup_ir_learning\":") + (setupInfrared_.learning() ? "true" : "false");
@@ -281,16 +329,19 @@ class SetupPortal {
     json += ",\"setup_ir_protocol\":" + quoted(door::name(setupKey.protocol));
     json += ",\"setup_ir_address\":" + String(setupKey.address);
     json += ",\"setup_ir_command\":" + String(setupKey.command);
+    json += ",\"setup_ir_count\":" + String(setupInfrared_.count()) + ",\"setup_ir_capacity\":" + String(door::kIrMaxKeys);
+    json += ",\"setup_ir_buttons\":" + buttonList(setupInfrared_);
     json += ",\"setup_ir_event\":" + quoted(lastSetupIrEvent_) + "}";
     server_.send(200, "application/json", json);
   }
   void learn() {
+    if (infrared_.count() >= door::kIrMaxKeys) { message(409, "Door button list is full. Remove a button before adding another."); return; }
     if (irLearning() || !hardwareReady_ || controller_.faulted() || !infrared_.learn(millis())) {
       message(409, "Learning is unavailable. Check hardware and storage status."); return;
     }
     controller_.inhibit(millis(), true);
     relay_.permitInfrared(false);
-    lastIrEvent_ = "Learning started. Release for 500 ms, then press the same button twice within 30 seconds.";
+    lastIrEvent_ = "Learning started. Release for 500 ms, then press the same button twice within 30 seconds. Existing buttons are retained.";
     message(200, lastIrEvent_);
   }
   void saveSettings() {

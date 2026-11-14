@@ -5,12 +5,12 @@
 #include "../firmware/DoorRelease/Infrared.h"
 
 struct MemoryIrStorage : door::IrStorage {
-  door::IrKey saved{};
-  door::IrLoad load(door::IrKey& key) override {
-    key = saved;
-    return saved.valid() ? door::IrLoad::Loaded : door::IrLoad::Empty;
+  door::IrKeys saved{};
+  door::IrLoad load(door::IrKeys& keys) override {
+    keys = saved;
+    return saved.count() ? door::IrLoad::Loaded : door::IrLoad::Empty;
   }
-  bool save(const door::IrKey& key) override { saved = key; return true; }
+  bool save(const door::IrKeys& keys) override { saved = keys; return true; }
 };
 constexpr door::IrKey kDemoKey{door::IrProtocol::Nec, 0x1234, 0x45, 32};
 
