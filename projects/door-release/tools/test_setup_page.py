@@ -233,6 +233,13 @@ def main():
             assert any(path == "/api/activity" for path, _ in REQUESTS)
             page.wait_for_timeout(1200)
             assert page.locator("#ssid").input_value() == "Edited network"
+            page.locator("#tab-infrared").click()
+            wait_js(page, "document.querySelector('#unsaved-dialog').open")
+            page.locator("#unsaved-cancel").click()
+            assert page.locator("#ssid").input_value() == "Edited network"
+            page.locator("#tab-infrared").click()
+            page.locator("#unsaved-discard").click()
+            assert page.locator("#ssid").input_value() == "Home Network"
             page.locator("#learn").click()
             wait_js(page, "document.querySelector('#ir-state').textContent === 'Learning in progress'")
             assert page.locator("#save").is_disabled()
@@ -291,6 +298,8 @@ def main():
             STATE.update(connected=False, ap=True, remaining_seconds=0)
             wait_js(page, "document.querySelector('#window').textContent === 'Offline recovery'")
             assert page.locator("#learn").is_enabled()
+            page.locator("#tab-wifi").click()
+            page.locator("#ssid").fill("Edited network")
             page.locator("#wifi-password").fill("password123")
             page.locator("summary", has_text="Setup hotspot password").click()
             page.locator("#setup-password").fill("PrivateSetupPassword")

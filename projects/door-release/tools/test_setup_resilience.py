@@ -42,8 +42,7 @@ def main():
             assert not qa.STATUS_FAULTS
             assert not qa.REQUESTS  # Initial reconnects are not user activity.
             assert page.locator("#notice").is_hidden()
-            page.locator("#ssid").fill("Preserve this network")
-            page.locator("#wifi-password").fill("PreserveThisPassword")
+            page.locator("#tab-infrared").click()
             qa.wait_js(page, "document.querySelector('#window').textContent === '10:00'")
             page.wait_for_timeout(200)
 
@@ -67,6 +66,10 @@ def main():
             qa.STATUS_DELAY = 0
             page.locator("#cancel").click()
             qa.wait_js(page, "!document.querySelector('#save').disabled")
+            page.locator("#tab-wifi").click()
+            page.locator("#ssid").fill("Preserve this network")
+            page.locator("#wifi-password").fill("PreserveThisPassword")
+            qa.wait_js(page, "document.querySelector('#window').textContent === '10:00'")
 
             # Multiple temporary failures must recover with no reload or Retry.
             qa.STATUS_FAULTS[:] = [503, "json", "disconnect"]

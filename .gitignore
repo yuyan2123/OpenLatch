@@ -1,5 +1,8 @@
 .tools/
 build/
 __pycache__/
-firmware/DoorRelease/secrets.h
+/projects/*/firmware/**/secrets.h
 *.log
+/projects/outdoor-reader/private/
+/projects/outdoor-reader/.pio/
+/projects/outdoor-reader/sdkconfig*

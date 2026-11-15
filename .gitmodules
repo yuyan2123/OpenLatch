@@ -1,0 +1,3 @@
+[submodule "projects/outdoor-reader/HomeKey-ESP32"]
+	path = projects/outdoor-reader/HomeKey-ESP32
+	url = https://github.com/rednblkx/HomeKey-ESP32.git

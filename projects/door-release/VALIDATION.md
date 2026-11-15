@@ -1,5 +1,12 @@
 # 虛擬驗證紀錄
 
+## 2026-11-16 設定頁分頁（原始碼，未燒錄）
+
+- 沿用原有顏色、字型與文案，改成 Wi-Fi、Infrared、RFID、Other settings 四個分頁；RFID 僅預留空白分頁，HomeKit 資訊移到 Other settings。
+- 未保存表單切頁時提供 Save and restart、Discard、Cancel。取消保留原頁與輸入；捨棄還原欄位；保存失敗或欄位驗證失敗不切頁。紅外線維持立即保存。
+- `python tools/test_setup_tabs.py`、`python tools/test_setup_page.py`、`python tools/test_setup_resilience.py` 與 `python tools/simulate.py test` 通過。涵蓋五種寬度、鍵盤、三種確認操作、錯誤處理與原本連線復原流程。
+- 已重新產生 `SetupPage.h`，並檢查桌面與手機截圖。此為本機模擬 API 驗證，未燒錄或連線實機。
+
 ## 2026-11-14 目前原始碼與實機：1.2.3-web-recovery
 
 - 修正前端一次狀態查詢失敗就設為停止的問題；短暫錯誤改為 1／2／4／8 秒退避自動重試。保留已輸入欄位，確認連線恢復後恢復操作；伺服器明確回覆的儲存／驗證錯誤仍顯示原訊息，不與斷線混淆。
