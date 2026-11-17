@@ -2,12 +2,11 @@
 
 ESP-32S／ESP32-WROOM-32、4 MB Flash，搭配 SPI 模式 PN532。門外只轉送 NFC 交握；HomeKey 驗證、憑證與開門權限屬於門內控制器。
 
-韌體重用 [HomeKey-ESP32](HomeKey-ESP32/README.md) 的 PN532 通訊元件與 ECP 探測流程，獨立建置。上游 submodule 保持原樣。
+韌體使用根目錄 [third_party](../../third_party/README.md) 中的 PN532 通訊元件，獨立建置；來源版本與授權隨專案保存。
 
 門內 `door-release` 已加入 ESP-NOW 接收、DigitalDoorKey HomeKey 驗證、HomeKit NFC 憑證佈建與錯誤次數限制。**雙板 MAC 配置與真實 iPhone／Watch 驗證仍待實機完成，尚未燒錄本次整合。** 見 [門內配置](../door-release/docs/homekey_setup.md)。
 
 ```text
-HomeKey-ESP32/       上游 submodule
 firmware/main/      ESP-NOW 與 PN532 韌體
 include/            封包與轉送狀態機
 tests/              本機測試
@@ -34,7 +33,7 @@ SPI 訊號使用 3.3 V 邏輯。若模組只標示 5 V 電源輸入，需先確�
 
 ## 建置與測試
 
-以下從 `projects/outdoor-reader/` 執行。重新取得 repository 後，先在 repository 根目錄執行 `git submodule update --init --recursive`。
+以下從 `projects/outdoor-reader/` 執行。所需元件已隨 repository 放在 `third_party/`，不需要額外取得上游專案。
 
 ```powershell
 python -m pip install --target .tools/python platformio==6.1.19

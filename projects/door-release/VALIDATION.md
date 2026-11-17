@@ -1,5 +1,12 @@
 # 虛擬驗證紀錄
 
+## 2026-11-17 相依原始碼獨立存放
+
+- 已取出必要元件至根目錄 `third_party/`，移除 `projects/outdoor-reader/HomeKey-ESP32` 工作目錄、gitlink 及 `.gitmodules`。DigitalDoorKey 只保留 HomeKey 實作與遞迴引用的標頭；PN532 與 logging 元件保留執行期原始碼、標頭及元件建置設定。
+- 83 個檔案逐一與原上游 Git snapshot 比對一致，各元件 MIT LICENSE 保留。`third_party/manifest.json` 記錄來源網址、固定 commit 與每個檔案的 SHA-256；該目錄 `.gitattributes` 保留元件的原始行尾，避免 Git 自動轉換影響校驗碼。
+- 門內準備工具與原生測試改讀 `third_party/DigitalDoorKey`，Arduino 產生式相依改放全新的 `.tools/vendor-libraries`，避免舊標頭快取掩蓋缺檔。舊工作目錄不存在時，`python tools/simulate.py test` 與 NFC profile 兩項測試通過。
+- `tools/build-firmware.ps1 -TestNfc` 從新目錄完整編譯成功，程式空間 1,778,960 bytes、靜態 RAM 62,328 bytes，與移動前相同；OTA 映像驗證通過，公開測試映像仍禁止上傳。未修改韌體行為或裝置配置，未燒錄實機。
+
 ## 2026-11-17 網頁 OTA（1.3.0-ota，未燒錄）
 
 - Other settings 新增 Firmware update：選擇應用程式 `.bin`、輸入設定熱點密碼，顯示上傳／驗證進度並於成功後重啟。拒絕未儲存設定、學習中的操作、錯誤大小／晶片／映像、錯誤密碼；失敗保留檔案供重試，不自動重送上傳。

@@ -23,8 +23,4 @@ python tools/simulate.py demo
 
 每個專案各自管理建置設定、`build/` 與 `.tools/`；根目錄 `docs/` 放跨專案文件。
 
-HomeKey-ESP32 及其相依以 Git submodule 管理。重新取得此 repository 後，從根目錄執行：
-
-```powershell
-git submodule update --init --recursive
-```
+共用的 Home Key 與 PN532 相依原始碼放在 [third_party](third_party/README.md)，隨 repository 一起取得，不需要初始化 submodule。各元件保留授權、來源版本與檔案校驗紀錄。

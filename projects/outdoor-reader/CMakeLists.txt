@@ -1,16 +1,16 @@
 cmake_minimum_required(VERSION 3.16)
 set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/firmware/sdkconfig.defaults")
-set(UPSTREAM "${CMAKE_CURRENT_LIST_DIR}/HomeKey-ESP32")
+get_filename_component(VENDOR "${CMAKE_CURRENT_LIST_DIR}/../../third_party" ABSOLUTE)
 foreach(component pn532_cxx pn532_hal loggable)
-    if(NOT EXISTS "${UPSTREAM}/components/${component}/CMakeLists.txt")
-        message(FATAL_ERROR "Run git submodule update --init --recursive from the repository root")
+    if(NOT EXISTS "${VENDOR}/${component}/CMakeLists.txt")
+        message(FATAL_ERROR "Missing vendored component: third_party/${component}")
     endif()
 endforeach()
 set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/firmware/main"
-    "${UPSTREAM}/components/pn532_cxx"
-    "${UPSTREAM}/components/pn532_hal"
-    "${UPSTREAM}/components/loggable")
+    "${VENDOR}/pn532_cxx"
+    "${VENDOR}/pn532_hal"
+    "${VENDOR}/loggable")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(OpenLatchOutdoor VERSION 0.1.0)
 

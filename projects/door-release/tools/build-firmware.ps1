@@ -28,7 +28,7 @@ try {
     }
     & ./.tools/arduino-cli/arduino-cli.exe compile --config-file arduino-cli.yaml `
         --fqbn 'esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=min_spiffs,FlashSize=4M' `
-        --libraries .tools/homekey-libraries `
+        --libraries .tools/vendor-libraries `
         --build-property "compiler.cpp.extra_flags=$homeKeyFlags" `
         --build-path $outputPath firmware/DoorRelease
     if ($LASTEXITCODE -ne 0) { throw 'Firmware compilation failed.' }

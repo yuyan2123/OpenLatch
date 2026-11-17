@@ -40,7 +40,7 @@ def main():
     subprocess.run(compiler() + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-Wno-mismatched-tags", "-O1",
                    "-I", str(ROOT / "tests/fakes"),
                    "-I", str(ROOT.parent / "outdoor-reader/include"),
-                   "-I", str(ROOT.parent / "outdoor-reader/HomeKey-ESP32/components/DigitalDoorKey/include"),
+                   "-I", str(ROOT.parents[1] / "third_party/DigitalDoorKey/include"),
                    str(ROOT / "tests/nfc_tests.cpp"), "-o", str(nfc_exe)], cwd=ROOT, check=True)
     result = subprocess.run([str(nfc_exe)], cwd=ROOT)
     if result.returncode:

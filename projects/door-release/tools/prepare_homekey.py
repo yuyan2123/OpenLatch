@@ -1,4 +1,4 @@
-"""Stage the pinned submodule HomeKey sources as local Arduino libraries."""
+"""Stage the vendored HomeKey sources as local Arduino libraries."""
 from pathlib import Path
 import shutil
 import hashlib
@@ -6,8 +6,8 @@ import urllib.request
 import argparse
 
 ROOT = Path(__file__).resolve().parents[1]
-UPSTREAM = ROOT.parent / "outdoor-reader/HomeKey-ESP32/components/DigitalDoorKey"
-LIBRARIES = ROOT / ".tools/homekey-libraries"
+UPSTREAM = ROOT.parents[1] / "third_party/DigitalDoorKey"
+LIBRARIES = ROOT / ".tools/vendor-libraries"
 
 
 def main():
@@ -15,7 +15,7 @@ def main():
     parser.add_argument("--test-profile", action="store_true")
     args = parser.parse_args()
     if not (UPSTREAM / "include/ddk/session/Session.h").exists():
-        raise SystemExit("Initialize submodules: git submodule update --init --recursive")
+        raise SystemExit("Missing vendored HomeKey sources: third_party/DigitalDoorKey")
     library = LIBRARIES / "DigitalDoorKey"
     source = library / "src"
     for folder in ("include", "priv"):
@@ -36,7 +36,7 @@ def main():
         shutil.copy2(path, target)
     (library / "library.properties").write_text(
         "name=DigitalDoorKey\nversion=1.0.0\nauthor=rednblkx\nmaintainer=rednblkx\n"
-        "sentence=HomeKey verification from the pinned repository submodule.\n"
+        "sentence=HomeKey verification from the pinned vendored sources.\n"
         "paragraph=Indoor HomeKey verification.\ncategory=Communication\n"
         "url=https://github.com/rednblkx/DigitalDoorKey\narchitectures=esp32\n", encoding="utf-8")
     protocol = LIBRARIES / "OpenLatchNfc"

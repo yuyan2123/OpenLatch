@@ -1,5 +1,11 @@
 # 門外轉送器驗證
 
+## 2026-11-17 獨立相依原始碼
+
+- `pn532_cxx`、`pn532_hal`、`loggable` 改由根目錄 `third_party/` 提供，保留來源版本與 MIT 授權；不再需要完整上游專案或 submodule。
+- 移除舊工作目錄後，`python tools/test.py` 全部通過；`python tools/build.py` 以 ESP-IDF 5.5.3 重新編譯、連結成功，程式空間 671,687 bytes、靜態 RAM 34,188 bytes，與先前未配置版本相同。
+- 已檢查重新產生的 `compile_commands.json`：PN532 frontend 2 個、HAL 3 個與 logging 2 個編譯單元均來自 `third_party/`，沒有舊來源目錄路徑。未燒錄或接觸實機。
+
 日期：2026-11-16。目標 ESP-32S／ESP32-WROOM-32、4 MB Flash、PN532 SPI。
 
 ## 本機測試

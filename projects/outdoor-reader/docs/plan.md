@@ -2,9 +2,9 @@
 
 ## 門外端
 
-本次實作 ESP-32S／PN532 SPI 韌體，使用上游 `pn532_cxx`、`pn532_hal`、`loggable` 與 ECP 探測方式。提供固定配對、加密 ESP-NOW、HMAC、頻道搜尋、APDU 轉送、重送快取與期限控制。
+ESP-32S／PN532 SPI 韌體使用根目錄 `third_party/` 的 `pn532_cxx`、`pn532_hal`、`loggable` 與 ECP 探測方式。提供固定配對、加密 ESP-NOW、HMAC、頻道搜尋、APDU 轉送、重送快取與期限控制。
 
-缺少配置、板子 MAC 不符、PN532 初始化失敗時不開始轉送。上游完整 HomeKey-ESP32 保留作參考，驗證私鑰與鎖服務不帶到門外。
+缺少配置、板子 MAC 不符、PN532 初始化失敗時不開始轉送。僅保留必要的獨立元件原始碼；驗證私鑰與鎖服務不帶到門外。
 
 ## 門內端
 

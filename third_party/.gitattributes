@@ -1,0 +1,5 @@
+* text eol=lf
+DigitalDoorKey/** -text
+pn532_cxx/** -text
+pn532_hal/** -text
+loggable/** -text

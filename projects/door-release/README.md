@@ -163,7 +163,7 @@ powershell -ExecutionPolicy Bypass -File tools/build-firmware.ps1
 
 建置後另檢查實際分割區、晶片、應用程式 SHA-256、OTA 大小與 production/test 標記，並產生 `build/esp32c3/firmware.json`。網頁 OTA 選擇 `DoorRelease.ino.bin`；不要選 merged、bootloader、partitions 或 `-TestNfc` 測試映像。
 
-Home Key 建置會從已固定版本的 submodule 準備 DigitalDoorKey 原始碼，並以校驗碼固定的 TinyCBOR 0.6.0 公開標頭補足 Arduino SDK 缺漏。首次準備需要網路，之後使用本機快取；不修改 submodule 或 SDK。Windows 編譯暫用空閒磁碟代號縮短工具鏈路徑，結束後移除。`tools/build-firmware.ps1 -TestNfc` 另建完整 NFC 測試映像，使用公開測試金鑰，只供編譯驗證。
+Home Key 建置使用根目錄 [third_party](../../third_party/README.md) 的 DigitalDoorKey HomeKey 原始碼，不再依賴完整上游專案。TinyCBOR 0.6.0 公開標頭仍以固定校驗碼補足 Arduino SDK 缺漏，首次下載需要網路，之後使用本機快取；不修改 SDK。Windows 編譯暫用空閒磁碟代號縮短工具鏈路徑，結束後移除。`tools/build-firmware.ps1 -TestNfc` 另建完整 NFC 測試映像，使用公開測試金鑰，只供編譯驗證。
 
 如果需要預填出廠設定，可複製 `secrets.example.h` 為同資料夾的 `secrets.h`；只在第一次沒有 NVS 設定時採用，之後以網頁儲存的設定為準。私密檔案已加入 `.gitignore`。Wi-Fi、設定密碼及配對資料會存進 NVS；這不是 flash 加密，請勿分享私有檔案、實機韌體或 flash 備份。
 

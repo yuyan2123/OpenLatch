@@ -1,4 +1,3 @@
-get_filename_component(UPSTREAM "${CMAKE_CURRENT_LIST_DIR}/../../HomeKey-ESP32" ABSOLUTE)
 set(PRIVATE_INCLUDES "")
 if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../private")
     list(APPEND PRIVATE_INCLUDES "../../private")

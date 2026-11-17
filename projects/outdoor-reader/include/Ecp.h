@@ -4,7 +4,7 @@
 #include <cstdint>
 
 namespace outdoor {
-// ISO/IEC 14443-A CRC, matching HomeKey-ESP32's Utils::crc16a.
+// ISO/IEC 14443-A CRC-A for the ECP polling frame.
 inline uint16_t crcA(const uint8_t* data, size_t size) {
   uint16_t crc = 0x6363;
   for (size_t i = 0; i < size; ++i) {
