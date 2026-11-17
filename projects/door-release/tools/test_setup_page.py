@@ -32,10 +32,13 @@ STATUS_FAULTS = []
 STATUS_DELAY = 0
 IN_FLIGHT = MAX_IN_FLIGHT = 0
 IO_LOCK = threading.Lock()
+OTA_REQUESTS = []
+OTA_FAILURE = False
+OTA_DELAY = 0
 
 
 def reset():
-    global SAVE_FAILURE, EXPIRED, DEADLINE, STATUS_DELAY, MAX_IN_FLIGHT
+    global SAVE_FAILURE, EXPIRED, DEADLINE, STATUS_DELAY, MAX_IN_FLIGHT, OTA_FAILURE, OTA_DELAY
     STATE.clear()
     STATE.update(token="1234567890abcdef1234567890abcdef", ssid="Home Network",
                  connected=True, ap=False, ap_name="DoorRelease-AABBCC", ip="192.168.1.42",
@@ -43,6 +46,7 @@ def reset():
                  pairing_code="59263814", relay_pulse_ms=200, default_password=True, settings_ready=True,
                  nfc_max_failures=5, nfc_lockout_seconds=60, nfc_failures=0, nfc_lockout_remaining_ms=0,
                  nfc_configured=False, nfc_provisioned=False, nfc_connected=False,
+                 firmware_version="1.3.0-ota", ota_supported=True, ota_max_bytes=1966080, firmware_test_build=False,
                  hardware_ready=True, ir_ready=True, ir_learning=False, ir_enabled=False,
                  ir_protocol="none", ir_address=0, ir_command=0,
                  ir_event="Ready. Start learning to register an unlock button.",
@@ -52,6 +56,7 @@ def reset():
                  ir_count=0, ir_capacity=16, ir_buttons=[],
                  setup_ir_count=0, setup_ir_capacity=16, setup_ir_buttons=[])
     REQUESTS.clear()
+    OTA_REQUESTS.clear(); OTA_FAILURE = False; OTA_DELAY = 0
     SAVE_FAILURE = EXPIRED = False
     DEADLINE = time.monotonic() + 580
     STATUS_FAULTS.clear()
@@ -137,10 +142,20 @@ class Handler(BaseHTTPRequestHandler):
         if EXPIRED:
             self.reply(410, {"message": "Setup window closed. Press the learned setup button or restart, then reload."})
             return
-        body = self.rfile.read(int(self.headers.get("Content-Length", "0"))).decode()
+        payload = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         if self.headers.get("X-Setup-Token") != STATE["token"]:
             self.reply(403, {"message": "Invalid setup token."})
             return
+        if self.path == "/api/firmware":
+            REQUESTS.append((self.path, {"size": [str(len(payload))]}))
+            if self.headers.get("X-OTA-Password") != "DoorSetup-2026":
+                self.reply(403, {"message": "Incorrect setup password."}); return
+            OTA_REQUESTS.append(payload)
+            if OTA_DELAY:
+                time.sleep(OTA_DELAY)
+            self.reply(400 if OTA_FAILURE else 200, {"message": "Firmware verification failed." if OTA_FAILURE else "Firmware installed. Restarting now."})
+            return
+        body = payload.decode()
         arguments = parse_qs(body, keep_blank_values=True)
         REQUESTS.append((self.path, arguments))
         if self.path == "/api/activity":

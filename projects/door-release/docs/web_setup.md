@@ -1,6 +1,6 @@
 # Phone setup: Wi-Fi and infrared
 
-Current source: **1.2.5-rfid-limits** (not uploaded in this change).
+Current source: **1.3.0-ota** (not uploaded in this change).
 The latest recorded device upload is **1.2.3-web-recovery**. The English
 page supports up to 16 door buttons and 16 setup-access buttons and a ten-minute idle
 window. Digest login is temporarily commented out at the owner's request.
@@ -159,7 +159,9 @@ the protected AP or a trusted LAN. Digest authentication is currently commented
 out in `SetupPortal::authorize()` for later restoration. During an open window,
 the page and status need no login. Mutations and activity renewal still require
 a per-boot random token and same-origin checks. Host checks reject unrelated domains. There is no HTTP door
-release API, firmware upload route or enabled OTA service.
+release API. The firmware upload route additionally requires the setup password
+and streams into the inactive OTA app slot. See [OTA updates](ota_setup.md) for
+the required first USB installation and subsequent browser updates.
 
 ## HomeKit port and discovery
 

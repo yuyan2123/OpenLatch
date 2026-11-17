@@ -1,5 +1,17 @@
 # 虛擬驗證紀錄
 
+## 2026-11-17 網頁 OTA（1.3.0-ota，未燒錄）
+
+- Other settings 新增 Firmware update：選擇應用程式 `.bin`、輸入設定熱點密碼，顯示上傳／驗證進度並於成功後重啟。拒絕未儲存設定、學習中的操作、錯誤大小／晶片／映像、錯誤密碼；失敗保留檔案供重試，不自動重送上傳。
+- 改用 min_spiffs 雙 OTA 分割區，每槽 0x1E0000（1,966,080）bytes。明確的 partitions.csv 保留 NVS 0x9000／0x5000 與 otadata 0xE000／0x2000。舊 Huge APP 版本首次仍須 USB 更新分割區，未嘗試線上改寫分割表；更新及 USB 安裝說明見 docs/ota_setup.md。
+- `/api/firmware` 使用固定長度原始串流，驗證本次開機 token、Origin／Host、設定密碼及設定窗口後，才暫停開門。僅寫未使用 app 分割區，先檢查 ESP32-C3 標頭、app descriptor 與 image hash 標示，完整接收後檢查 Door Release production 相容性標記，再由 ESP-IDF 驗證完整映像並切換開機分割區。測試配置標記 T 不可經 OTA 安裝。沒有數位簽章或新增遠端開門入口。
+- 開始更新時，控制器 inhibit、各來源繼電器權限均停用，已驗證 HomeKit 連線關閉、IR 接收停止、NFC 結果撤銷。失敗後清除 IR 緩衝並重新要求 500 ms 安靜間隔，避免更新期間的舊動作延後執行。15 秒無資料或總計 180 秒逾時會中止；開機選擇不會在完整驗證成功前改動。標準 Arduino bootloader 不提供新程式故障後的自動 rollback。
+- `python tools/simulate.py test` 通過。新增測試涵蓋 1／7／287／288／512／1436 byte 分塊、相鄰相容性 prefix、錯誤／測試映像、單分割區／寫回運行槽拒絕、過大／過短、寫入與驗證失敗、中斷、跨時鐘溢位與逾時，以及路由密碼／token／Origin／類型檢查、全來源抑制、NVS 不變、失敗重試及重啟時序。
+- `test_ota_page.py`、`test_setup_page.py`、`test_setup_tabs.py`、`test_setup_resilience.py` 通過。OTA QA 包含五種寬度、舊分割區 USB 提示、檔案／密碼／未儲存設定檢查、失敗重試、進度、上傳期間停用變更、密碼清除及一次僅一筆 API。已檢查 `build/setup-ota-mobile.png`。
+- 兩種韌體均成功編譯：一般配置 1,715,306 bytes 程式空間、62,296 bytes 靜態 RAM；完整 NFC 測試配置 1,778,960 bytes 程式空間、62,328 bytes 靜態 RAM。產出應用程式檔案分別為 1,715,456／1,779,104 bytes，均小於 OTA 槽。`verify_ota_image.py` 核對實際分割區、app descriptor、晶片、完整映像 SHA-256 與 production/test 標記，產生 firmware.json。
+- 兩份實際產出 `.bin` 再以正式 FirmwareUpdate 串流驗證器及 flash 替身處理：一般映像可完成並選擇開機槽，公開 NFC 測試映像遭拒絕，未選擇新槽。設定頁已重新產生，`git diff --check` 通過。
+- 本次未連線或燒錄實機，未改動裝置 NVS，未送出開門動作。真實 USB 遷移、Wi-Fi 上傳、斷電及新映像開機仍待控制器驗證。
+
 ## 2026-11-17 Home Key 門內驗證與錯誤限制（1.2.5-rfid-limits，未燒錄）
 
 - 依使用者確認，磁扣指 Apple Home Key（iPhone／Apple Watch）；本次包含門內 ESP-NOW 接收、APDU 轉送端、DigitalDoorKey 驗證、HomeKit NFC 憑證佈建及已驗證 NFC 開門入口。雙板 MAC 配置依要求留待之後，尚未產生實際通訊金鑰或連線實機。

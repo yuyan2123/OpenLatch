@@ -2,7 +2,9 @@
 
 本專案位於 `projects/door-release/`。以下指令均從此目錄執行；若目前在 repository 根目錄，先執行 `cd projects/door-release`。其他專案見 [OpenLatch](../../README.md)。
 
-目前原始碼為 **1.2.5-rfid-limits**：加入門內 Apple Home Key 驗證、ESP-NOW 轉送接收與 HomeKit NFC 憑證佈建。**RFID** 分頁可設定連續錯誤次數與暫停秒數，預設 **5 次／60 秒**；有效驗證清除連續錯誤，重送不重計，讀取／通訊／儲存故障不算憑證錯誤。未配置雙板 MAC 與通訊金鑰時，NFC 保持停用。實機配置依使用者要求留待之後，操作見 [Home Key](docs/homekey_setup.md)。
+目前原始碼為 **1.3.0-ota**：**Other settings / Firmware update** 可選擇應用程式 `.bin`、輸入設定熱點密碼後更新並重啟。更新期間暫停開門，驗證完整映像後才切換至新分割區。**舊版首次啟用必須經 USB 安裝雙 OTA 分割區**；之後才可透過網頁更新。操作、首次安裝與限制見 [OTA 更新](docs/ota_setup.md)。
+
+門內 Apple Home Key 驗證、ESP-NOW 轉送接收與 HomeKit NFC 憑證佈建保留。**RFID** 分頁可設定連續錯誤次數與暫停秒數，預設 **5 次／60 秒**；有效驗證清除連續錯誤，重送不重計，讀取／通訊／儲存故障不算憑證錯誤。未配置雙板 MAC 與通訊金鑰時，NFC 保持停用。實機配置依使用者要求留待之後，操作見 [Home Key](docs/homekey_setup.md)。
 
 **Other settings / Door release** 可自訂開門時間 **1–800 ms**，預設 **200 ms（0.2 秒）**，HomeKit、紅外線與已驗證 Home Key 共用。按 **Save and restart** 後生效，斷電仍保留。v1／v2 設定自動載入，保留 Wi-Fi、HomeKit 配對碼、IR 按鍵及已有自訂時間。GPIO4 驅動強度 3、2 秒冷卻與兩種用途各 16 組 IR 按鍵均保留。
 
@@ -90,7 +92,7 @@ quit
 
 冷卻從主迴圈**觀察到停止**開始計算，所以主迴圈延遲時只會更晚接受下一次請求。重複抑制範圍是正在動作與冷卻期間；HomeKit `On` 沒有應用層請求 ID，冷卻後的新 ON 視為新指令。
 
-控制器不提供 HTTP 解鎖 API、MQTT、OTA 或串列直接開門指令。HomeSpan 內建串列輸入、診斷與 AP 佈建入口已關閉，改由本專案的網頁處理設定；USB IR 設定與診斷保留。網頁登入依要求暫時停用；修改及活動續時仍需有效的本次啟動 token，拒絕跨來源請求，不回傳 Wi-Fi 或設定密碼。日誌不印 Wi-Fi、設定密碼或配對碼。所有韌體命名、註解及訊息使用英文。
+控制器不提供 HTTP 解鎖 API、MQTT 或串列直接開門指令。HomeSpan 內建串列輸入、診斷與 AP 佈建入口已關閉，改由本專案的網頁處理設定；USB IR 設定與診斷保留。網頁登入依要求暫時停用；修改及活動續時仍需有效的本次啟動 token，拒絕跨來源請求，不回傳 Wi-Fi 或設定密碼。OTA 安裝另需設定熱點密碼。日誌不印 Wi-Fi、設定密碼或配對碼。所有韌體命名、註解及訊息使用英文。
 
 ## 紅外線學習與開門
 
@@ -134,6 +136,10 @@ firmware/DoorRelease/
   HomeKeyStore.h        門內憑證 NVS、CRC 與讀回驗證
   HomeKeyManager.h      ESP-NOW、獨立 Home Key 驗證工作及一次性結果
   HomeKeyServices.h     Apple Home NFC 憑證佈建、配對同步與鎖服務
+  FirmwareInfo.h        韌體版本及 OTA 相容性標記
+  FirmwareUpdate.h      串流檢查、長度／期限及映像識別
+  EspFirmwareSink.h     寫入未使用分割區、驗證及開機切換
+  partitions.csv        4 MB flash 的雙 OTA 分割區
   SetupPolicy.h         10 分鐘期限、重連與離線 AP 策略
   SetupPortal.h         登入、設定網頁、DNS 與設定 API
   SetupPage.h           自動產生、嵌入 flash 的網頁
@@ -146,7 +152,7 @@ tools/                 模擬、環境安裝、僅編譯韌體的工具
 
 ## 韌體編譯（仍不需要硬體）
 
-固定相依版本：Arduino-ESP32 **3.3.0**、HomeSpan **2.1.8**、IRremote **4.4.1**。使用 ESP32-C3 generic board，4 MB flash 與 Huge APP（3 MB 應用程式分割區，無 OTA）。安裝資料都放在 `.tools/`。
+固定相依版本：Arduino-ESP32 **3.3.0**、HomeSpan **2.1.8**、IRremote **4.4.1**。使用 ESP32-C3 generic board、4 MB flash、min_spiffs 雙 OTA 分割區；每個應用程式上限 **1,966,080 bytes**，NVS 位置保留。安裝資料都放在 `.tools/`。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools/setup.ps1
@@ -154,6 +160,8 @@ powershell -ExecutionPolicy Bypass -File tools/build-firmware.ps1
 ```
 
 目前不填任何密碼也能編譯。預設啟動設定 AP，由手機完成 Wi-Fi 及 IR 設定。編譯腳本會先執行 `tools/build_setup_page.py`，將 HTML 嵌入韌體。兩支 PowerShell 腳本均不燒錄、不尋找 COM port。
+
+建置後另檢查實際分割區、晶片、應用程式 SHA-256、OTA 大小與 production/test 標記，並產生 `build/esp32c3/firmware.json`。網頁 OTA 選擇 `DoorRelease.ino.bin`；不要選 merged、bootloader、partitions 或 `-TestNfc` 測試映像。
 
 Home Key 建置會從已固定版本的 submodule 準備 DigitalDoorKey 原始碼，並以校驗碼固定的 TinyCBOR 0.6.0 公開標頭補足 Arduino SDK 缺漏。首次準備需要網路，之後使用本機快取；不修改 submodule 或 SDK。Windows 編譯暫用空閒磁碟代號縮短工具鏈路徑，結束後移除。`tools/build-firmware.ps1 -TestNfc` 另建完整 NFC 測試映像，使用公開測試金鑰，只供編譯驗證。
 

@@ -9,6 +9,8 @@
 #include "SetupPage.h"
 #include "Infrared.h"
 #include "TimedRelay.h"
+#include "EspFirmwareSink.h"
+#include <functional>
 
 class SetupPortal {
  public:
@@ -28,8 +30,8 @@ class SetupPortal {
     policy_.begin(bootAt, settings_.ssid[0] != 0);
     WiFi.persistent(false);
     WiFi.setAutoReconnect(false);
-    const char* headers[] = {"Origin", "X-Setup-Token"};
-    server_.collectHeaders(headers, 2);
+    const char* headers[] = {"Origin", "X-Setup-Token", "X-OTA-Password", "Content-Type"};
+    server_.collectHeaders(headers, 4);
     server_.on("/", HTTP_GET, [this]() {
       if (authorize()) server_.send_P(200, "text/html; charset=utf-8", kSetupPage);
     });
@@ -38,6 +40,7 @@ class SetupPortal {
       if (authorize(true)) message(200, "Setup access extended.");
     });
     server_.on("/api/settings", HTTP_POST, [this]() { if (authorize(true)) saveSettings(); });
+    server_.on("/api/firmware", HTTP_POST, [this]() { finishFirmware(); }, [this]() { receiveFirmware(); });
     server_.on("/api/ir/learn", HTTP_POST, [this]() { if (authorize(true)) learn(); });
     server_.on("/api/ir/remove", HTTP_POST, [this]() { if (authorize(true)) removeButton(false); });
     server_.on("/api/setup-ir/remove", HTTP_POST, [this]() { if (authorize(true)) removeButton(true); });
@@ -95,6 +98,7 @@ class SetupPortal {
   void poll() {
     const uint32_t now = millis();
     nfcAttempts_.tick(now);
+    firmware_.tick(now);
     if (infrared_.tick(now)) noteIrEvent(door::IrEvent::TimedOut);
     if (setupInfrared_.tick(now)) noteSetupIrEvent(door::IrEvent::TimedOut);
     pollNetwork();
@@ -102,6 +106,8 @@ class SetupPortal {
     if (webActive_) server_.handleClient();
   }
   bool restarting() const { return restarting_; }
+  bool updating() const { return firmware_.active(); }
+  void beforeFirmwareUpdate(std::function<void()> callback) { beforeFirmware_ = std::move(callback); }
   void nfcStatus(bool configured, bool provisioned, bool connected) {
     nfcConfigured_ = configured; nfcProvisioned_ = provisioned; nfcConnected_ = connected;
   }
@@ -213,7 +219,7 @@ class SetupPortal {
     if (WiFi.status() == WL_CONNECTED && value == WiFi.localIP().toString()) return true;
     return apActive_ && value == WiFi.softAPIP().toString();
   }
-  bool authorize(bool mutation = false) {
+  bool authorize(bool mutation = false, bool firmware = false) {
     headers();
     const uint32_t now = millis();
     policy_.tick(now, WiFi.status() == WL_CONNECTED);
@@ -230,7 +236,8 @@ class SetupPortal {
       return false;
     }
     */
-    if (restarting_) { message(503, "Settings saved. Device is restarting."); return false; }
+    if (restarting_) { message(503, "Device is restarting."); return false; }
+    if (updating() && !firmware) { message(409, "Firmware update is in progress."); return false; }
     if (mutation) {
       const String origin = server_.header("Origin");
       if (server_.header("X-Setup-Token") != token_ ||
@@ -238,7 +245,7 @@ class SetupPortal {
         message(403, "Setup token or request origin is invalid. Reload this page.");
         return false;
       }
-      if (server_.clientContentLength() > 1024) {
+      if (!firmware && server_.clientContentLength() > 1024) {
         message(413, "Settings request is too large."); return false;
       }
     }
@@ -247,6 +254,58 @@ class SetupPortal {
   void redirectToAp() {
     server_.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/");
     server_.send(302, "text/plain", "Open the device setup address in your browser.");
+  }
+  bool authorizeFirmware() {
+    if (!authorize(true, true)) return false;
+    const String password = server_.header("X-OTA-Password");
+    const size_t expected = strlen(settings_.setupPassword);
+    uint8_t difference = password.length() == expected ? 0 : 1;
+    for (size_t i = 0; i < expected; ++i)
+      difference |= uint8_t(settings_.setupPassword[i]) ^ (i < password.length() ? uint8_t(password[i]) : 0);
+    if (difference) { message(403, "Incorrect setup password."); return false; }
+    if (server_.header("Content-Type") != "application/octet-stream") {
+      message(415, "Send one application .bin as application/octet-stream."); return false;
+    }
+    return true;
+  }
+  void receiveFirmware() {
+    // WebServer uses the same callback for multipart and raw streams. Never
+    // dereference raw() for a multipart request.
+    if (server_.header("Content-Type") != "application/octet-stream") return;
+    auto& upload = server_.raw();
+    if (upload.status == RAW_START) {
+      firmwareRequest_ = false;
+      if (!authorizeFirmware()) { server_.client().stop(); return; }
+      if (irLearning() || updating()) { message(409, "Finish button learning or the current update first."); server_.client().stop(); return; }
+      const int length = server_.clientContentLength();
+      if (!firmware_.capacity()) { message(409, "OTA partitions are unavailable. Install the OTA firmware over USB first."); server_.client().stop(); return; }
+      if (length < 288 || size_t(length) > firmware_.capacity()) {
+        message(413, "Firmware does not fit the OTA partition."); server_.client().stop(); return;
+      }
+      firmwareRequest_ = firmware_.start(millis(), size_t(length));
+      if (!firmwareRequest_) { message(400, firmware_.error() ? firmware_.error() : "Firmware update is unavailable."); server_.client().stop(); return; }
+      controller_.inhibit(millis(), true);
+      relay_.permit(false); relay_.permitInfrared(false); relay_.permitNfc(false);
+      if (beforeFirmware_) beforeFirmware_();
+      policy_.noteActivity(millis());
+    } else if (upload.status == RAW_WRITE && firmwareRequest_) {
+      if (firmware_.active()) firmware_.write(millis(), upload.buf, upload.currentSize);
+      policy_.noteActivity(millis());
+    } else if (upload.status == RAW_ABORTED) {
+      firmware_.cancel();
+      controller_.inhibit(millis(), irLearning() || restarting_);
+    }
+  }
+  void finishFirmware() {
+    if (!authorizeFirmware()) return;
+    if (!firmwareRequest_) { message(400, "No firmware image was received."); return; }
+    firmwareRequest_ = false;
+    if (!firmware_.finish(millis())) {
+      controller_.inhibit(millis(), irLearning() || restarting_);
+      message(400, firmware_.error() ? firmware_.error() : "Firmware update failed."); return;
+    }
+    restarting_ = true; restartAt_ = millis();
+    message(200, "Firmware installed. Restarting now.");
   }
   static String quoted(const String& value) {
     String result = "\"";
@@ -330,6 +389,10 @@ class SetupPortal {
     json += ",\"setup_window_ms\":" + String(door::kSetupWindowMs);
     json += ",\"pairing_code\":" + quoted(settings_.pairingCode);
     json += ",\"relay_pulse_ms\":" + String(settings_.relayPulseMs);
+    json += ",\"firmware_version\":" + quoted(door::kFirmwareVersion);
+    json += ",\"ota_max_bytes\":" + String(firmware_.capacity());
+    json += String(",\"ota_supported\":") + (firmware_.capacity() ? "true" : "false");
+    json += String(",\"firmware_test_build\":") + (door::firmwareTestBuild() ? "true" : "false");
     json += ",\"nfc_max_failures\":" + String(settings_.nfcMaxFailures);
     json += ",\"nfc_lockout_seconds\":" + String(settings_.nfcLockoutSeconds);
     json += ",\"nfc_failures\":" + String(nfcAttempts_.failures(millis()));
@@ -425,6 +488,10 @@ class SetupPortal {
   TimedRelay& relay_;
   door::NfcAttemptLimiter& nfcAttempts_;
   WebServer server_{80};
+  EspFirmwareSink firmwareSink_;
+  door::FirmwareUpdate firmware_{firmwareSink_};
+  std::function<void()> beforeFirmware_;
+  bool firmwareRequest_ = false;
   DNSServer dns_;
   door::SetupPolicy policy_;
   char hostname_[40]{}, apName_[32]{}, token_[33]{};

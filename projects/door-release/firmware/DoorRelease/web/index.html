@@ -67,6 +67,10 @@ summary{cursor:pointer;min-height:44px;align-content:center;font-size:var(--text
 .steps{margin:var(--space-sm) 0 0;padding-left:var(--space-lg);font-size:var(--text-sm);color:var(--color-muted)}.steps li+li{margin-top:var(--space-xs)}
 .pairing{margin-top:var(--space-xl);padding-top:var(--space-lg);border-top:1px solid var(--color-rule)}
 .pairing code{display:block;margin-top:var(--space-md);font-family:var(--font-mono);font-size:var(--text-section);font-variant-numeric:tabular-nums}
+.firmware{margin-top:var(--space-xl);padding-top:var(--space-lg);border-top:1px solid var(--color-rule)}
+.firmware progress{display:block;width:100%;height:12px;margin-top:var(--space-md);accent-color:var(--color-accent)}
+.firmware .error{color:var(--color-error)}input[type="file"]{padding:var(--space-xs);font-size:var(--text-sm)}
+input[type="file"]::file-selector-button{font:inherit;padding:var(--space-xs);margin-right:var(--space-xs);border:0;border-radius:var(--radius-control);background:var(--color-paper-3);color:var(--color-ink)}
 .notice{display:flex;align-items:center;justify-content:space-between;gap:var(--space-md);padding:var(--space-md);margin-bottom:var(--space-lg);border-left:3px solid var(--color-accent);background:var(--color-paper-2);font-size:var(--text-sm);overflow-wrap:anywhere}
 .notice.error{border-color:var(--color-error);color:var(--color-error);background:var(--color-error-paper)}
 .notice:empty{display:none}.notice p{min-width:0}
@@ -146,6 +150,16 @@ dialog::backdrop{background:color-mix(in srgb,var(--color-ink) 25%,transparent)}
   <button id="save-other" class="save" type="submit" form="settings-form" disabled>Save and restart</button>
 </section>
 <section class="pairing" aria-labelledby="pairing-heading"><h2 id="pairing-heading">HomeKit</h2><p class="section-intro">Add this device in the Apple Home app.</p><div><span class="hint">HomeKit pairing code</span><code id="pairing-code">Loading…</code></div><small>Existing HomeKit pairings are retained when Wi-Fi changes.</small></section>
+<section class="firmware" aria-labelledby="firmware-heading">
+  <h2 id="firmware-heading">Firmware update</h2><p id="firmware-version" class="section-intro">Reading version…</p>
+  <form id="firmware-form">
+    <div class="field"><label for="firmware-file">Firmware (.bin)</label><input id="firmware-file" type="file" accept=".bin,application/octet-stream" required aria-describedby="firmware-hint" disabled><small id="firmware-hint">Choose DoorRelease.ino.bin.</small></div>
+    <div class="field"><label for="firmware-password">Setup password</label><input id="firmware-password" type="password" minlength="12" maxlength="63" autocomplete="current-password" required aria-describedby="firmware-password-hint" disabled><small id="firmware-password-hint">Same as the setup hotspot.</small></div>
+    <button id="firmware-upload" class="save" type="submit" disabled>Update and restart</button>
+  </form>
+  <progress id="firmware-progress" value="0" max="100" aria-label="Firmware upload" hidden></progress>
+  <p id="firmware-status" class="ir-message" role="status" aria-live="polite"></p>
+</section>
 <p class="auth-note">Web login is temporarily disabled. The setup hotspot still requires its password.</p>
 </div>
 </div>
@@ -163,6 +177,7 @@ let activityTimer=null,lastActivitySent=0,lastUserActivity=0,activityPending=fal
 let connectionFailed=false,connectionNotice=false,failures=0,restarting=false,refreshInFlight=false;
 let requestTail=Promise.resolve(),countdownUntil=0;
 let currentPage="wifi",pendingPage=null,savedSettings=null;
+let firmwareNotice=false;
 const pageNames=["wifi","infrared","rfid","other"],unsavedDialog=byId("unsaved-dialog");
 function settingsValues(){return [byId("ssid").value,byId("wifi-password").value,byId("open-network").checked,byId("setup-password").value,byId("relay-pulse").value,byId("nfc-max-failures").value,byId("nfc-lockout-seconds").value]}
 function unsavedSettings(){return savedSettings!==null&&JSON.stringify(settingsValues())!==JSON.stringify(savedSettings)}
@@ -213,6 +228,9 @@ function controls(){
   byId("save").disabled=!ready||learning;byId("save-hint").textContent=learning?"Finish or cancel button learning before saving.":"Changes take effect after restart.";
   byId("save-other").disabled=byId("save").disabled;
   byId("save-rfid").disabled=byId("save").disabled;
+  const otaReady=ready&&Boolean(lastState&&lastState.ota_supported);
+  byId("firmware-file").disabled=!otaReady;byId("firmware-password").disabled=!otaReady;
+  byId("firmware-upload").disabled=!otaReady||learning;
   byId("learn").disabled=!ready||learning||!lastState||!lastState.hardware_ready||!lastState.ir_ready||lastState.ir_count>=lastState.ir_capacity;
   byId("cancel").disabled=!ready||!lastState||!lastState.ir_learning;
   byId("forget").disabled=!ready||learning||Boolean(lastState&&lastState.ir_ready&&!lastState.ir_count);
@@ -290,6 +308,9 @@ function render(state){
   stopped=false;connectionFailed=false;failures=0;
   lastState=state;token=state.token;if(!initialized){byId("ssid").value=state.ssid;byId("relay-pulse").value=state.relay_pulse_ms??200;byId("nfc-max-failures").value=state.nfc_max_failures??5;byId("nfc-lockout-seconds").value=state.nfc_lockout_seconds??60;savedSettings=settingsValues();initialized=true}
   byId("door-timing").textContent="Saved buttons work offline. A press gives a "+(state.relay_pulse_ms??200)+" ms pulse with a 2 second cooldown.";
+  byId("firmware-version").textContent=state.firmware_version||"Unknown version";
+  byId("firmware-hint").textContent="Choose DoorRelease.ino.bin."+(state.ota_max_bytes?" Up to "+(state.ota_max_bytes/1048576).toFixed(2)+" MB.":"");
+  if(!firmwareNotice)firmwareMessage(state.ota_supported?"Door release pauses during the update.":"Install the OTA firmware over USB first.",false,false);
   byId("nfc-state").textContent=state.nfc_lockout_remaining_ms>0?"Home Key paused. "+Math.ceil(state.nfc_lockout_remaining_ms/1000)+" seconds remaining.":!state.nfc_configured?"Reader connection is not configured.":!state.nfc_provisioned?"Set up Home Key in Apple Home.":!state.nfc_connected?"Waiting for the outdoor reader.":(state.nfc_failures??0)+" failed attempts. Reader connected.";
   byId("network").textContent=state.connected?"Connected to "+state.ssid:"Setup hotspot: "+state.ap_name;
   byId("address").textContent=state.ip;
@@ -348,6 +369,41 @@ async function saveSettings(){
 // Validate after revealing the owning tab so hidden fields can receive focus.
 byId("settings-form").noValidate=true;
 byId("settings-form").addEventListener("submit",event=>{event.preventDefault();saveSettings()});
+function firmwareMessage(text,error=false,persist=true){firmwareNotice=persist;byId("firmware-status").textContent=text;byId("firmware-status").classList.toggle("error",error)}
+byId("firmware-file").addEventListener("change",()=>{firmwareNotice=false;byId("firmware-progress").hidden=true;if(lastState)render(lastState)});
+function sendFirmware(file,password){
+  const task=requestTail.then(()=>new Promise((resolve,reject)=>{
+    const upload=new XMLHttpRequest();upload.open("POST","/api/firmware");upload.timeout=180000;
+    upload.setRequestHeader("Content-Type","application/octet-stream");upload.setRequestHeader("X-Setup-Token",token);upload.setRequestHeader("X-OTA-Password",password);
+    upload.upload.addEventListener("progress",event=>{if(event.lengthComputable){byId("firmware-progress").value=Math.round(event.loaded/event.total*100);if(event.loaded===event.total)firmwareMessage("Verifying firmware…")}});
+    upload.addEventListener("load",()=>{
+      let data;try{data=JSON.parse(upload.responseText)}catch{reject(new Error("Update response was interrupted. Check the device version before trying again."));return}
+      if(upload.status===410)closePage(data.message);
+      if(upload.status>=200&&upload.status<300){syncCountdown(data,true);resolve(data)}
+      else{const error=new Error(data.message||"Firmware update failed.");error.status=upload.status;reject(error)}
+    });
+    for(const event of ["error","timeout","abort"])upload.addEventListener(event,()=>reject(new Error("Upload interrupted. Check the device version before trying again.")));
+    upload.send(file);
+  }));
+  requestTail=task.catch(()=>{});return task;
+}
+byId("firmware-form").addEventListener("submit",async event=>{
+  event.preventDefault();if(byId("firmware-upload").disabled||!byId("firmware-form").reportValidity())return;
+  if(unsavedSettings()){firmwareMessage("Save or discard settings changes before updating.",true);return}
+  const file=byId("firmware-file").files[0];
+  if(!file||!file.name.toLowerCase().endsWith(".bin")||file.size<288||file.size>lastState.ota_max_bytes){firmwareMessage("Choose an application .bin that fits the available OTA partition.",true);return}
+  busy=true;controls();clearTimeout(refreshTimer);byId("firmware-upload").setAttribute("aria-busy","true");
+  try{
+    const header=new Uint8Array(await file.slice(0,288).arrayBuffer());
+    if(header[0]!==0xe9||!header[1]||header[1]>16||header[12]!==5||header[13]!==0||header[23]!==1||header[32]!==0x32||header[33]!==0x54||header[34]!==0xcd||header[35]!==0xab)throw new Error("Choose an ESP32-C3 application .bin, not a merged image or bootloader.");
+    const password=byId("firmware-password").value;byId("firmware-password").value="";
+    byId("firmware-progress").value=0;byId("firmware-progress").hidden=false;firmwareMessage("Uploading firmware…");
+    const data=await sendFirmware(file,password);
+    restarting=true;stopped=true;clearTimeout(refreshTimer);clearTimeout(activityTimer);byId("firmware-file").value="";
+    byId("window").textContent="Restarting";byId("firmware-progress").value=100;firmwareMessage(data.message+" Reopen this page to check the version.");
+  }catch(error){firmwareMessage(error.message,true);if(error.status===410)closePage(error.message)}
+  finally{busy=false;byId("firmware-password").value="";byId("firmware-upload").removeAttribute("aria-busy");controls();if(!restarting)scheduleRefresh(1000)}
+});
 async function buttonAction(button,path,body=""){
   busy=true;button.setAttribute("aria-busy","true");controls();
   try{await request(path,body);notice("");render(await request("/api/status"))}

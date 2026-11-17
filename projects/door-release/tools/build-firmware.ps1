@@ -23,15 +23,18 @@ try {
     $homeKeyFlags = "-DCONFIG_IDF_CMAKE=1 -DLOG_LOCAL_LEVEL=ESP_LOG_NONE -I${buildRoot}.tools/homekey-support"
     $outputPath = 'build/esp32c3'
     if ($TestNfc) {
-        $homeKeyFlags += " -I${buildRoot}.tools/compile-fixture"
+        $homeKeyFlags += " -I${buildRoot}.tools/compile-fixture -DDOOR_TEST_NFC_BUILD=1"
         $outputPath = 'build/esp32c3-nfc-test'
     }
     & ./.tools/arduino-cli/arduino-cli.exe compile --config-file arduino-cli.yaml `
-        --fqbn 'esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=huge_app,FlashSize=4M' `
+        --fqbn 'esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=min_spiffs,FlashSize=4M' `
         --libraries .tools/homekey-libraries `
         --build-property "compiler.cpp.extra_flags=$homeKeyFlags" `
         --build-path $outputPath firmware/DoorRelease
     if ($LASTEXITCODE -ne 0) { throw 'Firmware compilation failed.' }
+    if ($TestNfc) { & python tools/verify_ota_image.py $outputPath --test-profile }
+    else { & python tools/verify_ota_image.py $outputPath }
+    if ($LASTEXITCODE -ne 0) { throw 'OTA image verification failed.' }
 } finally {
     Pop-Location
     if ($driveAlias) { & subst $driveAlias /D }

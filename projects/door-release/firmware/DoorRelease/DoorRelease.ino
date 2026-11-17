@@ -13,6 +13,7 @@
 #include "SetupPortal.h"
 #include "HomeKeyManager.h"
 #include "HomeKeyServices.h"
+#include <HAP.h>
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
@@ -40,6 +41,7 @@ bool hardwareReady = false;
 bool homekitStarted = false;
 bool settingsReady = false;
 bool verifiedSession = false;  // Only changed on HomeSpan's polling task.
+bool firmwarePaused = false;
 
 bool initializeSettings() {
   const auto loaded = settingsStore.load(settings);
@@ -76,14 +78,14 @@ void syncConnectivity() {
     controller.connectivity(millis(), false, false);
   }
   bool online = WiFi.status() == WL_CONNECTED;
-  relay.permit(online && verifiedSession && !setupPortal.restarting());
+  relay.permit(online && verifiedSession && !setupPortal.restarting() && !setupPortal.updating());
   controller.connectivity(millis(), online, verifiedSession);
 }
 
 void syncInfrared() {
-  controller.inhibit(millis(), setupPortal.irLearning() || setupPortal.restarting());
+  controller.inhibit(millis(), setupPortal.irLearning() || setupPortal.restarting() || setupPortal.updating());
   relay.permitInfrared(hardwareReady && infrared.enabled() && !setupPortal.irLearning() &&
-                       !controller.faulted() && !setupPortal.restarting());
+                       !controller.faulted() && !setupPortal.restarting() && !setupPortal.updating());
 }
 
 void irStatus() {
@@ -189,6 +191,13 @@ void setup() {
       networkLost.store(true);
     }
   });
+  setupPortal.beforeFirmwareUpdate([]() {
+    homeKey.enabled(false);
+    if (homekitStarted) HAPClient::tearDown(nullptr);
+    verifiedSession = false;
+    if (hardwareReady) IrReceiver.stop();
+    firmwarePaused = true;
+  });
   setupPortal.begin(bootAt, settingsReady, hardwareReady);
   uint8_t stationMac[6]{};
   if (esp_read_mac(stationMac, ESP_MAC_WIFI_STA) == ESP_OK)
@@ -222,7 +231,7 @@ void setup() {
   new Characteristic::Manufacturer("DIY");
   new Characteristic::Model("ESP32-C3 SuperMini");
   new Characteristic::SerialNumber("door-release-001");
-  auto* revision = new Characteristic::FirmwareRevision("1.2.5-rfid-limits");
+  auto* revision = new Characteristic::FirmwareRevision(door::kFirmwareVersion);
   // Add Home Key finish without changing the existing switch's IIDs.
   const uint32_t switchIid = revision->getIID() + 1;
   homeSpan.resetIID(1000);
@@ -237,12 +246,18 @@ void setup() {
 }
 
 void loop() {
-  const bool nfcEnabled = hardwareReady && !controller.faulted() && !setupPortal.restarting() && !setupPortal.irLearning();
+  const bool nfcEnabled = hardwareReady && !controller.faulted() && !setupPortal.restarting() && !setupPortal.updating() && !setupPortal.irLearning();
   homeKey.enabled(nfcEnabled);
   relay.permitNfc(nfcEnabled);
   setupPortal.nfcStatus(homeKey.configured(), homeKey.provisioned(), homeKey.connected());
-  if (!setupPortal.restarting()) pollSerial();
+  if (!setupPortal.restarting() && !setupPortal.updating()) pollSerial();
   setupPortal.poll();
+  if (firmwarePaused && !setupPortal.updating() && !setupPortal.restarting()) {
+    // Drop buffered IR and require a new quiet interval after a failed upload.
+    infrared.cancel(millis()); setupInfrared.cancel(millis());
+    if (hardwareReady) IrReceiver.start();
+    firmwarePaused = false;
+  }
   if (setupPortal.restartDue(millis())) { relay.stop(); ESP.restart(); return; }
   if (!hardwareReady) { relay.stop(); delay(10); return; }
   syncInfrared();
@@ -251,7 +266,7 @@ void loop() {
   if (homekitStarted) homeSpan.poll();
   if (homekitStarted) syncHomeKeyControllers(homeKeyStore);
   // A setting/learning action in this iteration revokes pending NFC results.
-  const bool nfcAllowed = hardwareReady && !controller.faulted() && !setupPortal.restarting() && !setupPortal.irLearning();
+  const bool nfcAllowed = hardwareReady && !controller.faulted() && !setupPortal.restarting() && !setupPortal.updating() && !setupPortal.irLearning();
   homeKey.enabled(nfcAllowed); relay.permitNfc(nfcAllowed);
   if (!homeKeyControllersPending && homeKey.takeVerified(millis()) && nfcAllowed) {
     const auto result = controller.nfc(millis(), true);
@@ -259,7 +274,7 @@ void loop() {
   }
   syncConnectivity();
   controller.tick(millis());
-  if (!setupPortal.restarting() && IrReceiver.decode()) {
+  if (!setupPortal.restarting() && !setupPortal.updating() && IrReceiver.decode()) {
     const auto data = IrReceiver.decodedIRData;
     IrReceiver.resume();
     const auto event = setupPortal.receiveIr(millis(), irKey(data), irRepeat(data), irInvalid(data));

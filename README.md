@@ -4,7 +4,7 @@
 
 | 專案 | 用途 | 狀態 |
 | --- | --- | --- |
-| [door-release](projects/door-release/README.md) | ESP32-C3、Apple Home／Home Key 與紅外線開門控制器 | 原始碼 `1.2.5-rfid-limits`，實機紀錄 `1.2.3-web-recovery` |
+| [door-release](projects/door-release/README.md) | ESP32-C3，Apple Home／Home Key、IR 開門與 OTA 更新 | 原始碼 `1.3.0-ota`，實機紀錄 `1.2.3-web-recovery` |
 | [outdoor-reader](projects/outdoor-reader/README.md) | ESP-32S＋PN532 門外 NFC 轉送器 | 門內外程式已整合，待雙板配置與實機測試 |
 
 整體規劃見 [系統架構](docs/architecture.md) 與 [通訊規劃](docs/communication.md)。

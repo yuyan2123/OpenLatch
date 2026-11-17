@@ -20,6 +20,7 @@ struct Fixture {
   SetupPortal portal{settings, store, ir, setupIr, controller, relay, nfcAttempts};
   Fixture(bool credentials = false) {
     fakeMillis = 0; WiFi = {};
+    resetOta();
     nvsRecord.clear(); nvsPending.clear(); nvsWrites = 0;
     nvsOpenFails = nvsReadFails = nvsWriteFails = nvsCommitFails = nvsCorruptReadback = false;
     std::strcpy(settings.pairingCode, "59263814"); std::strcpy(settings.setupPassword, door::kDefaultSetupPassword);
@@ -292,10 +293,74 @@ void full_button_list_is_rejected() {
   fakeWeb->request("/api/setup-ir/learn", HTTP_POST); CHECK(fakeWeb->code == 409); CHECK(!f.setupIr.learning());
   CHECK(f.ir.count() == 16); CHECK(f.setupIr.count() == 16);
 }
+std::vector<uint8_t> firmwareImage() {
+  std::vector<uint8_t> bytes(512, 0);
+  bytes[0] = 0xe9; bytes[1] = 2; bytes[12] = 5; bytes[23] = 1;
+  bytes[32] = 0x32; bytes[33] = 0x54; bytes[34] = 0xcd; bytes[35] = 0xab;
+  bytes.insert(bytes.end(), std::begin(door::kFirmwareTag), std::end(door::kFirmwareTag)); return bytes;
+}
+void ota_route_guards() {
+  Fixture f;
+  fakeWeb->inputHeaders["Content-Type"] = "application/octet-stream";
+  fakeWeb->startRaw("/api/firmware", 1024); CHECK(fakeWeb->code == 403); CHECK(!otaBegins); CHECK(!f.portal.updating());
+  f.token();
+  fakeWeb->inputHeaders["X-OTA-Password"] = "wrong-password";
+  fakeWeb->startRaw("/api/firmware", 1024); CHECK(fakeWeb->code == 403); CHECK(!otaBegins);
+  fakeWeb->inputHeaders["X-OTA-Password"] = door::kDefaultSetupPassword;
+  fakeWeb->inputHeaders["Origin"] = "http://attacker.invalid";
+  fakeWeb->startRaw("/api/firmware", 1024); CHECK(fakeWeb->code == 403); CHECK(!otaBegins);
+  fakeWeb->inputHeaders["Origin"] = "http://192.168.4.1";
+  for (int size : {0, 287, 1966081}) {
+    fakeWeb->startRaw("/api/firmware", size); CHECK(fakeWeb->code == 413); CHECK(!otaBegins);
+  }
+  otaDual = false;
+  fakeWeb->startRaw("/api/firmware", 1024); CHECK(fakeWeb->code == 409); CHECK(!otaBegins);
+  fakeWeb->request("/api/status"); CHECK(fakeWeb->body.find("\"ota_supported\":false") != std::string::npos);
+  otaDual = true;
+  fakeWeb->inputHeaders["Content-Type"] = "multipart/form-data";
+  fakeWeb->rawRoutes.at("/api/firmware")();  // A multipart callback must never dereference raw().
+  fakeWeb->request("/api/firmware", HTTP_POST); CHECK(fakeWeb->code == 415); CHECK(!otaBegins);
+  fakeWeb->inputHeaders["Content-Type"] = "application/octet-stream";
+  CHECK(f.ir.learn(0));
+  fakeWeb->startRaw("/api/firmware", 1024); CHECK(fakeWeb->code == 409); CHECK(!otaBegins);
+}
+void ota_success_stops_all_release_sources() {
+  Fixture f; f.token(); const auto bytes = firmwareImage(); const auto settingsBefore = nvsRecord;
+  fakeMillis = 3000; f.relay.permit(true); f.relay.permitInfrared(true); f.relay.permitNfc(true);
+  f.controller.connectivity(fakeMillis, true, true);
+  CHECK(f.controller.homekit(fakeMillis, true, true) == door::Result::Accepted); CHECK(fakeGpio == 1);
+  int pauses = 0; f.portal.beforeFirmwareUpdate([&]() { ++pauses; });
+  fakeWeb->inputHeaders["Content-Type"] = "application/octet-stream";
+  fakeWeb->inputHeaders["X-OTA-Password"] = door::kDefaultSetupPassword;
+  fakeWeb->startRaw("/api/firmware", int(bytes.size())); CHECK(f.portal.updating()); CHECK(!fakeGpio); CHECK(pauses == 1);
+  CHECK(f.controller.homekit(fakeMillis, true, true) == door::Result::Inhibited);
+  CHECK(f.controller.infrared(fakeMillis, true) == door::Result::Inhibited);
+  CHECK(f.controller.nfc(fakeMillis, true) == door::Result::Inhibited);
+  fakeWeb->writeRaw("/api/firmware", bytes.data(), bytes.size()); CHECK(!otaSelections);
+  fakeWeb->finishRaw("/api/firmware"); CHECK(fakeWeb->code == 200); CHECK(f.portal.restarting());
+  CHECK(otaSelections == 1); CHECK(otaBytes == bytes); CHECK(nvsRecord == settingsBefore);
+  CHECK(!f.portal.restartDue(3999)); CHECK(f.portal.restartDue(4000)); CHECK(!fakeGpio);
+}
+void ota_abort_and_verification_failure() {
+  Fixture f; f.token(); const auto bytes = firmwareImage();
+  fakeWeb->inputHeaders["Content-Type"] = "application/octet-stream";
+  fakeWeb->inputHeaders["X-OTA-Password"] = door::kDefaultSetupPassword;
+  fakeWeb->startRaw("/api/firmware", int(bytes.size()));
+  fakeWeb->writeRaw("/api/firmware", bytes.data(), 288); CHECK(otaBegins == 1);
+  fakeWeb->finishRaw("/api/firmware", true); CHECK(otaAborts == 1); CHECK(!f.portal.updating()); CHECK(!f.portal.restarting());
+  fakeWeb->startRaw("/api/firmware", int(bytes.size()));
+  fakeWeb->writeRaw("/api/firmware", bytes.data(), bytes.size()); otaEndFails = true;
+  fakeWeb->finishRaw("/api/firmware"); CHECK(fakeWeb->code == 400); CHECK(!f.portal.restarting()); CHECK(!otaSelections);
+  otaEndFails = false;
+  fakeWeb->startRaw("/api/firmware", int(bytes.size()));
+  fakeWeb->writeRaw("/api/firmware", bytes.data(), bytes.size());
+  fakeWeb->finishRaw("/api/firmware"); CHECK(fakeWeb->code == 200); CHECK(otaSelections == 1);
+}
 int main() {
   authentication_and_request_guards(); browser_learning_and_forget();
   expiry_and_late_offline_recovery(); save_validation_and_restart(); relay_time_validation(); nfc_limits_validation_and_status();
   setup_button_learning_and_reopening(); activity_and_status_polling();
   multiple_buttons_removal_and_conflicts(); full_button_list_is_rejected();
+  ota_route_guards(); ota_success_stops_all_release_sources(); ota_abort_and_verification_failure();
   std::cout << "PASS: no-login routes, CSRF guards, independent IR buttons, activity windows, AP recovery and save/restart.\n";
 }

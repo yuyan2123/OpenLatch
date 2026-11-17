@@ -45,6 +45,12 @@ def main():
     result = subprocess.run([str(nfc_exe)], cwd=ROOT)
     if result.returncode:
         return result.returncode
+    ota_exe = build / ("ota_tests.exe" if os.name == "nt" else "ota_tests")
+    subprocess.run(compiler() + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-O1",
+                   "-I", str(ROOT / "tests/fakes"), str(ROOT / "tests/ota_tests.cpp"), "-o", str(ota_exe)], cwd=ROOT, check=True)
+    result = subprocess.run([str(ota_exe)], cwd=ROOT)
+    if result.returncode:
+        return result.returncode
     driver_exe = build / ("driver_tests.exe" if os.name == "nt" else "driver_tests")
     subprocess.run(compiler() + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-O1",
                    "-I", str(ROOT / "tests/fakes"), str(ROOT / "tests/driver_tests.cpp"),
