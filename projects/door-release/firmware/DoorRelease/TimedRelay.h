@@ -72,6 +72,12 @@ class TimedRelay final : public door::Relay {
     }
     portEXIT_CRITICAL(&mux_);
   }
+  void permitNfc(bool value) {
+    portENTER_CRITICAL(&mux_);
+    nfcPermitted_ = value;
+    if (!value && source_ == door::Source::Nfc) { gpio_set_level(pin_, 0); active_ = false; }
+    portEXIT_CRITICAL(&mux_);
+  }
   bool active() const override {
     portENTER_CRITICAL(&mux_);
     const bool value = active_;
@@ -81,6 +87,7 @@ class TimedRelay final : public door::Relay {
  private:
   // Called only while holding mux_. Network revocation cannot grant local access.
   bool permitted(door::Source source) const {
+    if (source == door::Source::Nfc) return nfcPermitted_;
     return source == door::Source::Infrared ? infraredPermitted_ : permitted_;
   }
   static void timeout(void* arg) { static_cast<TimedRelay*>(arg)->stop(); }
@@ -88,5 +95,6 @@ class TimedRelay final : public door::Relay {
   mutable portMUX_TYPE mux_ = portMUX_INITIALIZER_UNLOCKED;
   esp_timer_handle_t timer_ = nullptr;
   bool ready_ = false, permitted_ = false, infraredPermitted_ = false, active_ = false;
+  bool nfcPermitted_ = false;
   door::Source source_ = door::Source::HomeKit;
 };

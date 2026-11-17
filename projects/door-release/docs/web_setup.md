@@ -1,16 +1,40 @@
 # Phone setup: Wi-Fi and infrared
 
-Current source and uploaded device: **1.2.3-web-recovery**. The English
+Current source: **1.2.5-rfid-limits** (not uploaded in this change).
+The latest recorded device upload is **1.2.3-web-recovery**. The English
 page supports up to 16 door buttons and 16 setup-access buttons and a ten-minute idle
 window. Digest login is temporarily commented out at the owner's request.
-GPIO initialization, **200 ms** IR/HomeKit pulses and the 2 second cooldown
-remain unchanged. Upload hashes, boot hardware/storage status and the served
+IR/HomeKit relay time is now configurable from **1–800 ms**, with a **200 ms**
+default. GPIO initialization and the 2 second cooldown remain unchanged.
+For the last uploaded version, upload hashes, boot hardware/storage status and the served
 page matching the embedded build were verified on COM7. The existing door
 and setup buttons were retained during the upgrade.
 
 The firmware embeds a standalone English setup website in flash. It uses no
 external scripts, fonts, cloud service or internet connection. After the first
 USB firmware upload, routine configuration needs only a phone and power.
+
+The **RFID** tab configures Home Key failed-attempt limits (1–20) and lockout
+time (1–3600 seconds), defaulting to 5 attempts and 60 seconds. Select **Save and
+restart** to persist the settings. Counts and timers are volatile on the indoor
+controller; changing credentials/UID or reconnecting the outdoor reader does not
+reset failures. HomeKit and IR remain available during an NFC lockout. The tab
+also reports provisioning and reader connection status. The full indoor Home Key
+integration and deferred device configuration are described in [Home Key](homekey_setup.md).
+
+## Relay time
+
+Open **Other settings / Door release**, enter **Relay on time (ms)** as a whole
+number from 1 to 800, then select **Save and restart**. For example, 500 means
+0.5 seconds. HomeKit and infrared use the same duration. The independent timer
+still turns the relay off if the main loop stalls; duplicate requests never
+extend an active pulse. Saving does not trigger the relay.
+
+The duration is stored in NVS and survives power loss. Version 1 settings load
+with 200 ms while preserving Wi-Fi credentials, the hotspot password and the
+HomeKit pairing code. The two IR lists and HomeSpan pairings are unchanged.
+Saving upgrades the settings record to version 2 with CRC and readback checks.
+Older HTTP clients may omit `relay_pulse_ms` to retain the current duration.
 
 ## First setup
 

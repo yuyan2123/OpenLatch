@@ -56,7 +56,8 @@ def main():
             page.locator("#ssid").fill("Home Network")
             page.locator("#tab-rfid").click()
             selected(page, "rfid")
-            assert page.locator("#page-rfid").inner_text() == ""
+            assert page.locator("#rfid-heading").is_visible()
+            assert page.locator("#nfc-max-failures").input_value() == "5"
             assert not page.locator("#unsaved-dialog").is_visible()
             page.locator("#tab-wifi").click()
 
@@ -164,7 +165,7 @@ def main():
             qa.wait_js(page, "document.querySelector('#window').textContent === 'Restarting'")
             selected(page, "infrared")
             assert len(settings_posts()) == 2
-            assert settings_posts()[-1] == {"ssid": ["Keyboard draft"], "wifi_password": [""], "setup_password": [""]}
+            assert settings_posts()[-1] == {"ssid": ["Keyboard draft"], "wifi_password": [""], "setup_password": [""], "relay_pulse_ms": ["200"], "nfc_max_failures": ["5"], "nfc_lockout_seconds": ["60"]}
             assert page.evaluate("!unsavedSettings()")
             page.locator("#tab-wifi").click()
             selected(page, "wifi")

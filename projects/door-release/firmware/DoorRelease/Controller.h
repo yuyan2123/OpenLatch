@@ -8,7 +8,7 @@ constexpr uint32_t kCooldownMs = 2000;
 constexpr uint32_t kBootGuardMs = 3000;
 constexpr int kRelayPin = 4;
 constexpr int kIrPin = 3;
-enum class Source { HomeKit, Infrared };
+enum class Source { HomeKit, Infrared, Nfc };
 
 // Implementations must shut down independently of tick()/HomeSpan polling.
 struct Relay {
@@ -41,6 +41,10 @@ class Controller {
   explicit Controller(Relay& relay, uint32_t pulseMs = kPulseMs)
       : relay_(relay), pulseMs_(pulseMs) {}
 
+  void boot(uint32_t now, uint32_t pulseMs) {
+    pulseMs_ = pulseMs;
+    boot(now);
+  }
   void boot(uint32_t now) {
     relay_.stop();
     bootAt_ = now;
@@ -70,6 +74,12 @@ class Controller {
     tick(now);
     if (!matched) return Result::IrDisabled;
     return release(now, Source::Infrared);
+  }
+  // Only a fresh result from the indoor HomeKey verifier may set verified=true.
+  Result nfc(uint32_t now, bool verified = false) {
+    tick(now);
+    if (!verified) return Result::Unauthorized;
+    return release(now, Source::Nfc);
   }
   void inhibit(uint32_t now, bool value) {
     if (value && !inhibited_) finish(now);

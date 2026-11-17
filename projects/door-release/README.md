@@ -2,13 +2,17 @@
 
 本專案位於 `projects/door-release/`。以下指令均從此目錄執行；若目前在 repository 根目錄，先執行 `cd projects/door-release`。其他專案見 [OpenLatch](../../README.md)。
 
-目前原始碼與實機版本為 **1.2.3-web-recovery**：修正設定頁一次查詢失敗就停止更新的問題，短暫斷線會自動重連並保留輸入，倒數改為瀏覽器逐秒更新。設定窗口開放時暫停 Wi-Fi 省電，關閉後還原。開門與設定頁各 **16 組紅外線按鍵**、操作續時的 10 分鐘窗口、全英文介面及暫停網頁登入均保留。GPIO4 驅動強度 3、**200 ms（0.2 秒）**脈衝與 2 秒冷卻時間不變。已燒錄至 COM7，hash 校驗通過。紀錄見 [VALIDATION.md](VALIDATION.md)。
+目前原始碼為 **1.2.5-rfid-limits**：加入門內 Apple Home Key 驗證、ESP-NOW 轉送接收與 HomeKit NFC 憑證佈建。**RFID** 分頁可設定連續錯誤次數與暫停秒數，預設 **5 次／60 秒**；有效驗證清除連續錯誤，重送不重計，讀取／通訊／儲存故障不算憑證錯誤。未配置雙板 MAC 與通訊金鑰時，NFC 保持停用。實機配置依使用者要求留待之後，操作見 [Home Key](docs/homekey_setup.md)。
+
+**Other settings / Door release** 可自訂開門時間 **1–800 ms**，預設 **200 ms（0.2 秒）**，HomeKit、紅外線與已驗證 Home Key 共用。按 **Save and restart** 後生效，斷電仍保留。v1／v2 設定自動載入，保留 Wi-Fi、HomeKit 配對碼、IR 按鍵及已有自訂時間。GPIO4 驅動強度 3、2 秒冷卻與兩種用途各 16 組 IR 按鍵均保留。
+
+最近一次實機燒錄紀錄仍為 **1.2.3-web-recovery**；本次變更尚未燒錄。紀錄見 [VALIDATION.md](VALIDATION.md)。
 
 接線與操作請參考 [繁體中文 PDF 說明書](docs/door_lock_manual_zh-TW.pdf)（10 頁，含零件照片、接線圖與英文網頁／IR 設定頁），另有 [Markdown 版本](docs/door_lock_manual_zh-TW.md)。第 3～4 頁為控制器側接線；對講機只能在原按鈕接點經確認後，依第 7 頁的條件式接法評估介接。
 
 依照 [原始需求](door_lock_instructions.md) 與 `img/` 的零件照片實作。現在不需要接 ESP32；桌面模擬器與韌體直接共用 `firmware/DoorRelease/Controller.h`，不是另外寫一份 Python 門鎖邏輯。
 
-Apple Home 的「Front Door Release」是一個瞬時開關。OFF 只代表控制器沒有執行釋放動作，**不代表門已關閉或上鎖**。本專案沒有門位或鎖舌感測器。
+Apple Home 的「Front Door Release」保留瞬時開關，新增 Home Key 所需的鎖與 NFC 服務。OFF 只代表控制器沒有執行釋放動作，**不代表門已關閉或上鎖**；鎖的實體狀態回報 Unknown。本專案沒有門位或鎖舌感測器。
 
 ## 用手機設定 Wi-Fi 與紅外線
 
@@ -20,6 +24,8 @@ Apple Home 的「Front Door Release」是一個瞬時開關。OFF 只代表控�
 4. 成功連線後，手機切回同一 Wi-Fi，開啟 **`http://door-release-xxxxxx.local/`**，或路由器顯示的裝置 IP。網址尾碼與 AP 相同，字母改小寫；存檔前網頁也會顯示此網址。
 5. 在 **Remote buttons / Open the door** 按 **Add door button**，依畫面提示分開按同一按鍵兩次，每次之間放開至少 500 ms；30 秒內完成。新增不覆蓋既有按鍵，最多 16 組；可按 **Cancel learning** 取消。清單的 **Remove** 只刪除該筆，**Clear all door buttons** 則清除全部開門按鍵。
 6. 在 **Open setup access** 按 **Add setup button**，完成相同的兩次學習；此用途也可儲存 16 組，並有逐筆移除與全部清除。設定按鍵只開放網頁，不開門；尚未設定時，先利用開機窗口進網頁學習。兩種用途不能共用同一按鍵，重複學習不多占名額。學習立即儲存，不必再按 Wi-Fi 的儲存按鈕。
+7. 在 **Other settings / Door release** 的 **Relay on time (ms)** 輸入整數 1–800，按 **Save and restart**。例如 500 代表繼電器吸合 0.5 秒；冷卻時間仍為 2 秒。切換分頁前若有未儲存變更，可選擇儲存、放棄或取消。
+8. 在 **RFID** 設定 **Failed attempt limit**（1–20）及 **Lockout time (seconds)**（1–3600），按 **Save and restart**。只限制 NFC，不封鎖 HomeKit 或 IR。次數與暫停計時保留在門內 RAM，重啟門內控制器會清除；重啟門外板不會清除。頁面同時顯示配置、憑證、連線及鎖定狀態。
 
 Wi-Fi 與兩種用途的 IR 清單都存入 NVS，斷電仍保留。HomeKit 配對碼會在首次啟動時產生並儲存，網頁開放時可查看；Wi-Fi 改動不清除已有配對。不需要建立 `secrets.h`，也不需要為日常設定接電腦。首次燒錄仍使用 USB。
 
@@ -70,17 +76,17 @@ quit
 | 條件 | 行為 |
 | --- | --- |
 | 啟動／重啟 | GPIO4 LOW，不恢復先前請求；啟動後 3 秒內禁止動作 |
-| 經 HomeSpan 驗證的 ON 寫入 | 輸出 200 ms 脈衝 |
+| 經 HomeSpan 驗證的 ON 寫入 | 輸出設定時間的脈衝（預設 200 ms，可設 1–800 ms） |
 | ON 期間再次寫入 | 拒絕，不延長脈衝、不排隊 |
 | 脈衝結束／提早停止 | 至少冷卻 2 秒才接受新 ON |
 | 已授權 OFF | 立刻停止，並進入冷卻 |
 | Wi-Fi／最後一條已驗證 HomeKit 連線中斷 | 停止 HomeKit 發起的脈衝；不影響 IR 發起的脈衝；恢復連線不自動觸發 |
-| 已學習的 IR 按鍵 | 比對協定、位址、按鍵碼與位元數，觸發 200 ms 脈衝；可離線使用 |
+| 已學習的 IR 按鍵 | 比對協定、位址、按鍵碼與位元數，使用相同設定時間；可離線使用 |
 | IR 長按／重複訊號 | 需先有至少 500 ms 沒有解碼訊號才接受新按下；repeat、overflow、校驗失敗與不支援協定不觸發 |
 | HomeKit 與 IR 同時控制 | 共用 busy、2 秒冷卻與 3 秒啟動保護；不延長或排隊；HomeKit OFF 可停止任一來源的脈衝 |
 | IR 學習中 | 暫停兩種來源的開門；同一按鍵分開按兩次確認；30 秒逾時或取消保留舊設定 |
 | 無效脈衝設定／計時器啟動失敗 | OFF 並鎖住錯誤狀態，須重啟 |
-| 主迴圈停頓 | `esp_timer` 獨立執行 OFF，正常設定 200 ms，程式上限 800 ms |
+| 主迴圈停頓 | `esp_timer` 依設定時間獨立執行 OFF，預設 200 ms，程式上限 800 ms |
 
 冷卻從主迴圈**觀察到停止**開始計算，所以主迴圈延遲時只會更晚接受下一次請求。重複抑制範圍是正在動作與冷卻期間；HomeKit `On` 沒有應用層請求 ID，冷卻後的新 ON 視為新指令。
 
@@ -94,7 +100,7 @@ quit
 2. 先放開遙控器按鍵至少 500 ms，再按一下要用來開門的按鍵。
 3. 畫面顯示第一次按壓已擷取後，放開至少 500 ms，再按同一按鍵。需在啟動學習後 30 秒內完成。
 4. 顯示 **Button learned and saved** 即完成，這兩次學習按壓不會開門。設定會存入 NVS，重開機仍保留。正常連線模式下若設定網頁到期，未完成的學習會取消並保留舊設定。
-5. 再次放開後按該按鍵，會輸出 200 ms 開門脈衝。開機後前 3 秒及脈衝結束後 2 秒內不接受開門。
+5. 再次放開後按該按鍵，會輸出設定時間的開門脈衝，預設 200 ms。開機後前 3 秒及脈衝結束後 2 秒內不接受開門。
 
 USB 設定仍可選用：串列監控設定為 **115200**，換行選 LF、CR 或 CRLF。
 
@@ -123,6 +129,11 @@ firmware/DoorRelease/
   SerialLine.h          有長度限制的非阻塞 USB 指令輸入
   DeviceSettings.h      Wi-Fi／登入密碼／配對碼與共用驗證
   SettingsStore.h       設定 NVS 紀錄與讀回驗證
+  NfcAttemptLimiter.h    Home Key 連續錯誤、單次結果與暫停計時
+  IndoorSession.h       門內 ESP-NOW APDU 交握及重送狀態機
+  HomeKeyStore.h        門內憑證 NVS、CRC 與讀回驗證
+  HomeKeyManager.h      ESP-NOW、獨立 Home Key 驗證工作及一次性結果
+  HomeKeyServices.h     Apple Home NFC 憑證佈建、配對同步與鎖服務
   SetupPolicy.h         10 分鐘期限、重連與離線 AP 策略
   SetupPortal.h         登入、設定網頁、DNS 與設定 API
   SetupPage.h           自動產生、嵌入 flash 的網頁
@@ -143,6 +154,8 @@ powershell -ExecutionPolicy Bypass -File tools/build-firmware.ps1
 ```
 
 目前不填任何密碼也能編譯。預設啟動設定 AP，由手機完成 Wi-Fi 及 IR 設定。編譯腳本會先執行 `tools/build_setup_page.py`，將 HTML 嵌入韌體。兩支 PowerShell 腳本均不燒錄、不尋找 COM port。
+
+Home Key 建置會從已固定版本的 submodule 準備 DigitalDoorKey 原始碼，並以校驗碼固定的 TinyCBOR 0.6.0 公開標頭補足 Arduino SDK 缺漏。首次準備需要網路，之後使用本機快取；不修改 submodule 或 SDK。Windows 編譯暫用空閒磁碟代號縮短工具鏈路徑，結束後移除。`tools/build-firmware.ps1 -TestNfc` 另建完整 NFC 測試映像，使用公開測試金鑰，只供編譯驗證。
 
 如果需要預填出廠設定，可複製 `secrets.example.h` 為同資料夾的 `secrets.h`；只在第一次沒有 NVS 設定時採用，之後以網頁儲存的設定為準。私密檔案已加入 `.gitignore`。Wi-Fi、設定密碼及配對資料會存進 NVS；這不是 flash 加密，請勿分享私有檔案、實機韌體或 flash 備份。
 

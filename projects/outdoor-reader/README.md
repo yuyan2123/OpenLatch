@@ -4,7 +4,7 @@ ESP-32S／ESP32-WROOM-32、4 MB Flash，搭配 SPI 模式 PN532。門外只轉�
 
 韌體重用 [HomeKey-ESP32](HomeKey-ESP32/README.md) 的 PN532 通訊元件與 ECP 探測流程，獨立建置。上游 submodule 保持原樣。
 
-**本次實作是門外端。門內的 ESP-NOW 接收、DigitalDoorKey 驗證及 HomeKit NFC 憑證佈建尚未實作，現階段不能透過 HomeKey 開門。** 原有 `door-release` 韌體保持原樣。
+門內 `door-release` 已加入 ESP-NOW 接收、DigitalDoorKey HomeKey 驗證、HomeKit NFC 憑證佈建與錯誤次數限制。**雙板 MAC 配置與真實 iPhone／Watch 驗證仍待實機完成，尚未燒錄本次整合。** 見 [門內配置](../door-release/docs/homekey_setup.md)。
 
 ```text
 HomeKey-ESP32/       上游 submodule

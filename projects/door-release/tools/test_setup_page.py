@@ -40,7 +40,9 @@ def reset():
     STATE.update(token="1234567890abcdef1234567890abcdef", ssid="Home Network",
                  connected=True, ap=False, ap_name="DoorRelease-AABBCC", ip="192.168.1.42",
                  hostname="door-release-aabbcc.local", remaining_seconds=580,
-                 pairing_code="59263814", default_password=True, settings_ready=True,
+                 pairing_code="59263814", relay_pulse_ms=200, default_password=True, settings_ready=True,
+                 nfc_max_failures=5, nfc_lockout_seconds=60, nfc_failures=0, nfc_lockout_remaining_ms=0,
+                 nfc_configured=False, nfc_provisioned=False, nfc_connected=False,
                  hardware_ready=True, ir_ready=True, ir_learning=False, ir_enabled=False,
                  ir_protocol="none", ir_address=0, ir_command=0,
                  ir_event="Ready. Start learning to register an unlock button.",
@@ -321,7 +323,8 @@ def main():
             assert page.locator("#setup-password").input_value() == ""
             saved = [data for path, data in REQUESTS if path == "/api/settings"][-1]
             assert saved == {"ssid": ["Edited network"], "wifi_password": ["password123"],
-                             "setup_password": ["PrivateSetupPassword"]}
+                             "setup_password": ["PrivateSetupPassword"], "relay_pulse_ms": ["200"],
+                             "nfc_max_failures": ["5"], "nfc_lockout_seconds": ["60"]}
             reset()
             page.reload()
             wait_js(page, "!document.querySelector('#save').disabled")

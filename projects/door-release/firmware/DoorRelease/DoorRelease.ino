@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HomeSpan.h>
+#include <HK_HomeKit.h>
 #define NO_LED_FEEDBACK_CODE
 #include <IRremote.hpp>
 #include <atomic>
@@ -10,6 +11,8 @@
 #include "IrStore.h"
 #include "SerialLine.h"
 #include "SetupPortal.h"
+#include "HomeKeyManager.h"
+#include "HomeKeyServices.h"
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
@@ -28,7 +31,10 @@ door::Infrared setupInfrared(setupIrStore);
 SerialLine serialLine;
 door::DeviceSettings settings;
 SettingsStore settingsStore;
-SetupPortal setupPortal(settings, settingsStore, infrared, setupInfrared, controller, relay);
+door::NfcAttemptLimiter nfcAttempts;
+HomeKeyStore homeKeyStore;
+HomeKeyManager homeKey(homeKeyStore, nfcAttempts);
+SetupPortal setupPortal(settings, settingsStore, infrared, setupInfrared, controller, relay, nfcAttempts);
 std::atomic<bool> networkLost{false};
 bool hardwareReady = false;
 bool homekitStarted = false;
@@ -174,6 +180,9 @@ void setup() {
   Serial.println("USB infrared setup ready. Use: ir help");
   irStatus();
   settingsReady = initializeSettings();
+  nfcAttempts.begin(settings.nfcMaxFailures, settings.nfcLockoutSeconds);
+  controller.boot(bootAt, settings.relayPulseMs);
+  if (!hardwareReady) controller.trip(millis());
   WiFi.onEvent([](WiFiEvent_t event) {
     if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED || event == ARDUINO_EVENT_WIFI_STA_LOST_IP) {
       relay.permit(false);
@@ -181,6 +190,10 @@ void setup() {
     }
   });
   setupPortal.begin(bootAt, settingsReady, hardwareReady);
+  uint8_t stationMac[6]{};
+  if (esp_read_mac(stationMac, ESP_MAC_WIFI_STA) == ESP_OK)
+    Serial.printf("nfc_station_mac: %02X:%02X:%02X:%02X:%02X:%02X\n", stationMac[0], stationMac[1], stationMac[2], stationMac[3], stationMac[4], stationMac[5]);
+  homeKey.begin();
   if (!hardwareReady || !settingsReady || !settings.ssid[0]) {
     Serial.println("HomeKit not started. Configure Wi-Fi using the setup page and restart.");
     return;
@@ -200,19 +213,34 @@ void setup() {
     syncConnectivity();
   });
   homekitStarted = true;
-  homeSpan.begin(Category::Switches, "Front Door Release", setupPortal.hostname(), "C3-Release");
+  homeSpan.setControllerCallback(homeKeyControllersChanged);
+  homeSpan.begin(Category::Locks, "Front Door Release", setupPortal.hostname(), "C3-Release");
   new SpanAccessory();
-  new Service::AccessoryInformation();
+  new HomeKeyAccessoryInfo();
   new Characteristic::Identify();
   new Characteristic::Name("Front Door Release");
   new Characteristic::Manufacturer("DIY");
   new Characteristic::Model("ESP32-C3 SuperMini");
   new Characteristic::SerialNumber("door-release-001");
-  new Characteristic::FirmwareRevision("1.2.3-web-recovery");
+  auto* revision = new Characteristic::FirmwareRevision("1.2.5-rfid-limits");
+  // Add Home Key finish without changing the existing switch's IIDs.
+  const uint32_t switchIid = revision->getIID() + 1;
+  homeSpan.resetIID(1000);
+  uint8_t finishBytes[]{1, 4, 0xe3, 0xe3, 0xe3, 0};
+  TLV8 finish(nullptr, 0); finish.unpack(finishBytes, sizeof(finishBytes));
+  new Characteristic::HardwareFinish(finish);
+  homeSpan.resetIID(switchIid);
   new ReleaseSwitch();
+  new HomeKeyLockManagement();
+  new HomeKeyLockService(controller);
+  new HomeKeyAccessService(homeKeyStore);
 }
 
 void loop() {
+  const bool nfcEnabled = hardwareReady && !controller.faulted() && !setupPortal.restarting() && !setupPortal.irLearning();
+  homeKey.enabled(nfcEnabled);
+  relay.permitNfc(nfcEnabled);
+  setupPortal.nfcStatus(homeKey.configured(), homeKey.provisioned(), homeKey.connected());
   if (!setupPortal.restarting()) pollSerial();
   setupPortal.poll();
   if (setupPortal.restartDue(millis())) { relay.stop(); ESP.restart(); return; }
@@ -221,6 +249,14 @@ void loop() {
   syncConnectivity();
   controller.tick(millis());
   if (homekitStarted) homeSpan.poll();
+  if (homekitStarted) syncHomeKeyControllers(homeKeyStore);
+  // A setting/learning action in this iteration revokes pending NFC results.
+  const bool nfcAllowed = hardwareReady && !controller.faulted() && !setupPortal.restarting() && !setupPortal.irLearning();
+  homeKey.enabled(nfcAllowed); relay.permitNfc(nfcAllowed);
+  if (!homeKeyControllersPending && homeKey.takeVerified(millis()) && nfcAllowed) {
+    const auto result = controller.nfc(millis(), true);
+    Serial.printf("command_received: homekey; result=%s\n", door::name(result));
+  }
   syncConnectivity();
   controller.tick(millis());
   if (!setupPortal.restarting() && IrReceiver.decode()) {

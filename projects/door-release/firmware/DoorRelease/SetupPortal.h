@@ -14,9 +14,9 @@ class SetupPortal {
  public:
   SetupPortal(door::DeviceSettings& settings, SettingsStore& store, door::Infrared& infrared,
               door::Infrared& setupInfrared,
-              door::Controller& controller, TimedRelay& relay)
+              door::Controller& controller, TimedRelay& relay, door::NfcAttemptLimiter& nfcAttempts)
       : settings_(settings), store_(store), infrared_(infrared), setupInfrared_(setupInfrared),
-        controller_(controller), relay_(relay) {}
+        controller_(controller), relay_(relay), nfcAttempts_(nfcAttempts) {}
 
   void begin(uint32_t bootAt, bool storageReady, bool hardwareReady) {
     storageReady_ = storageReady;
@@ -94,6 +94,7 @@ class SetupPortal {
 
   void poll() {
     const uint32_t now = millis();
+    nfcAttempts_.tick(now);
     if (infrared_.tick(now)) noteIrEvent(door::IrEvent::TimedOut);
     if (setupInfrared_.tick(now)) noteSetupIrEvent(door::IrEvent::TimedOut);
     pollNetwork();
@@ -101,6 +102,9 @@ class SetupPortal {
     if (webActive_) server_.handleClient();
   }
   bool restarting() const { return restarting_; }
+  void nfcStatus(bool configured, bool provisioned, bool connected) {
+    nfcConfigured_ = configured; nfcProvisioned_ = provisioned; nfcConnected_ = connected;
+  }
   bool restartDue(uint32_t now) const { return restarting_ && uint32_t(now - restartAt_) >= 1000; }
   const char* hostname() const { return hostname_; }
   bool irLearning() const { return infrared_.learning() || setupInfrared_.learning(); }
@@ -325,6 +329,14 @@ class SetupPortal {
     json += ",\"remaining_ms\":" + String(remaining);
     json += ",\"setup_window_ms\":" + String(door::kSetupWindowMs);
     json += ",\"pairing_code\":" + quoted(settings_.pairingCode);
+    json += ",\"relay_pulse_ms\":" + String(settings_.relayPulseMs);
+    json += ",\"nfc_max_failures\":" + String(settings_.nfcMaxFailures);
+    json += ",\"nfc_lockout_seconds\":" + String(settings_.nfcLockoutSeconds);
+    json += ",\"nfc_failures\":" + String(nfcAttempts_.failures(millis()));
+    json += ",\"nfc_lockout_remaining_ms\":" + String(nfcAttempts_.remainingMs(millis()));
+    json += String(",\"nfc_configured\":") + (nfcConfigured_ ? "true" : "false");
+    json += String(",\"nfc_provisioned\":") + (nfcProvisioned_ ? "true" : "false");
+    json += String(",\"nfc_connected\":") + (nfcConnected_ ? "true" : "false");
     json += String(",\"default_password\":") + (!strcmp(settings_.setupPassword, door::kDefaultSetupPassword) ? "true" : "false");
     json += String(",\"settings_ready\":") + (storageReady_ ? "true" : "false");
     json += String(",\"hardware_ready\":") + (hardwareReady_ && !controller_.faulted() ? "true" : "false");
@@ -375,6 +387,23 @@ class SetupPortal {
     const char* error = door::updateSettings(candidate, ssid.c_str(), wifiPassword.c_str(),
                                             server_.arg("open_network") == "1", setupPassword.c_str());
     if (error) { message(400, error); return; }
+    if (server_.hasArg("relay_pulse_ms")) {
+      const String pulse = server_.arg("relay_pulse_ms");
+      if (pulse.length() != strlen(pulse.c_str())) { message(400, "Invalid relay on time."); return; }
+      error = door::updateRelayPulse(candidate, pulse.c_str());
+      if (error) { message(400, error); return; }
+    }
+    if (server_.hasArg("nfc_max_failures") || server_.hasArg("nfc_lockout_seconds")) {
+      if (!server_.hasArg("nfc_max_failures") || !server_.hasArg("nfc_lockout_seconds")) {
+        message(400, "Provide both RFID limit fields."); return;
+      }
+      const String failures = server_.arg("nfc_max_failures"), seconds = server_.arg("nfc_lockout_seconds");
+      if (failures.length() != strlen(failures.c_str()) || seconds.length() != strlen(seconds.c_str())) {
+        message(400, "RFID limits contain an invalid null byte."); return;
+      }
+      error = door::updateNfcLimits(candidate, failures.c_str(), seconds.c_str());
+      if (error) { message(400, error); return; }
+    }
     controller_.inhibit(millis(), true);
     relay_.permit(false);
     relay_.permitInfrared(false);
@@ -394,6 +423,7 @@ class SetupPortal {
   door::Infrared& setupInfrared_;
   door::Controller& controller_;
   TimedRelay& relay_;
+  door::NfcAttemptLimiter& nfcAttempts_;
   WebServer server_{80};
   DNSServer dns_;
   door::SetupPolicy policy_;
@@ -402,6 +432,7 @@ class SetupPortal {
   const char* lastSetupIrEvent_ = "Not set. Learn a setup button here during the boot window.";
   bool webActive_ = false, apActive_ = false, storageReady_ = false, hardwareReady_ = false;
   bool restarting_ = false;
+  bool nfcConfigured_ = false, nfcProvisioned_ = false, nfcConnected_ = false;
   wifi_ps_type_t savedSleep_ = WIFI_PS_MIN_MODEM;
   uint32_t restartAt_ = 0;
 };

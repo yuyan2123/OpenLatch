@@ -36,6 +36,15 @@ def main():
     result = subprocess.run([str(executable)] + ([] if testing else ["--" + args.mode]), cwd=ROOT)
     if result.returncode or not testing:
         return result.returncode
+    nfc_exe = build / ("nfc_tests.exe" if os.name == "nt" else "nfc_tests")
+    subprocess.run(compiler() + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-Wno-mismatched-tags", "-O1",
+                   "-I", str(ROOT / "tests/fakes"),
+                   "-I", str(ROOT.parent / "outdoor-reader/include"),
+                   "-I", str(ROOT.parent / "outdoor-reader/HomeKey-ESP32/components/DigitalDoorKey/include"),
+                   str(ROOT / "tests/nfc_tests.cpp"), "-o", str(nfc_exe)], cwd=ROOT, check=True)
+    result = subprocess.run([str(nfc_exe)], cwd=ROOT)
+    if result.returncode:
+        return result.returncode
     driver_exe = build / ("driver_tests.exe" if os.name == "nt" else "driver_tests")
     subprocess.run(compiler() + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-O1",
                    "-I", str(ROOT / "tests/fakes"), str(ROOT / "tests/driver_tests.cpp"),

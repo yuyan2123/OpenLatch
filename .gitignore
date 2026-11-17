@@ -2,6 +2,7 @@
 build/
 __pycache__/
 /projects/*/firmware/**/secrets.h
+/projects/*/firmware/**/nfc_peer.h
 *.log
 /projects/outdoor-reader/private/
 /projects/outdoor-reader/.pio/

@@ -1,5 +1,26 @@
 # 虛擬驗證紀錄
 
+## 2026-11-17 Home Key 門內驗證與錯誤限制（1.2.5-rfid-limits，未燒錄）
+
+- 依使用者確認，磁扣指 Apple Home Key（iPhone／Apple Watch）；本次包含門內 ESP-NOW 接收、APDU 轉送端、DigitalDoorKey 驗證、HomeKit NFC 憑證佈建及已驗證 NFC 開門入口。雙板 MAC 配置依要求留待之後，尚未產生實際通訊金鑰或連線實機。
+- RFID 分頁新增 1–20 次連續錯誤與 1–3600 秒暫停，預設 5 次／60 秒。有效驗證清除錯誤，切換 UID 不清除，重送與重複完成不重計；通訊、讀取、儲存、取消及逾時不算錯誤憑證。暫停期間禁止 NFC 新驗證且不延長期限，HomeKit／IR 不受此計數影響。計數在門內 RAM，重啟門內板清除，門外重連不清除。
+- 設定使用 CRC／讀回驗證的 v3 紀錄，完整保留 v1 Wi-Fi／配對碼及 v2 自訂脈衝。新增 Home Key 憑證命名空間，不重用設定或 IR 紀錄。失去憑證儲存完整性後不能發出有效驗證結果；取消配對時撤銷對應 issuer／endpoint，待同步的配對修改會阻止舊結果開門。
+- Home Key 使用獨立工作，NFC 與 IR 有各自的繼電器來源權限。成功結果只消費一次、250 ms 內有效，仍受既有啟動保護、脈衝／busy、2 秒冷卻、故障、學習及重啟抑制。保留原瞬時開關 IID，新增鎖服務的實體狀態固定 Unknown；HardwareFinish 另用 IID 1000。
+- `python tools/simulate.py test` 通過，新增 limiter 邊界／跨時鐘溢位／逾時、門內與真實 ReaderSession 往返、快取重送不重做 APDU、延後 Ping Ack 與新 Tag 交錯、錯誤 nonce／tap／request、舊回覆、憑證 NVS 逐位元組損毀與讀回失敗，以及 NFC／IR／HomeKit 來源共存測試。
+- `python -m unittest discover -s tests -p test_nfc_profile.py` 通過，涵蓋既有通訊金鑰匯入、欄位／MAC／頻道驗證及拒絕覆寫。門外 `python tools/test.py` 的 HMAC、畸形封包、期限、移除與配置測試均通過。
+- `test_nfc_settings.py`、`test_relay_settings.py`、`test_setup_page.py`、`test_setup_tabs.py`、`test_setup_resilience.py` 全部通過，涵蓋 5 種寬度、RFID 狀態與鎖定、表單範圍、草稿／放棄、儲存失敗、重啟及既有斷線恢復。已檢查 RFID 手機截圖。
+- 已安裝原固定 Arduino 3.3.0／HomeSpan 2.1.8／IRremote 4.4.1 工具鏈。建置準備使用固定 submodule 的 DigitalDoorKey HomeKey 元件，並補足 SDK 缺漏的 TinyCBOR 0.6.0 標頭（下載後核對 SHA-256）。未修改 submodule 或 SDK；Windows 透過暫時磁碟代號避開工具鏈長路徑。
+- 一般未配置韌體與 `tools/build-firmware.ps1 -TestNfc` 的完整 NFC 測試配置均已成功編譯；後者使用公開測試金鑰，輸出至獨立 `build/esp32c3-nfc-test`，不用於燒錄。最終完整路徑建置為 1,764,190 bytes 程式空間及 61,928 bytes 靜態 RAM。PSA／libsodium 在 HAP 佈建與驗證工作前初始化，等待佈建時不持有憑證 mutex。設定頁已重新產生。
+- 本次測試未驗證真實 Apple Home 佈建、iPhone／Watch 驗證及往返延遲、雙板無線通訊、工作堆疊峰值或實體接點；需配置後完成雙板驗收。未燒錄、未開啟實體繼電器。
+
+## 2026-11-17 自訂開門時間（1.2.4-relay-time，未燒錄）
+
+- Other settings 新增 Relay on time (ms)，整數範圍 1–800 ms，預設 200 ms；儲存並重啟後供 HomeKit 與 IR 共用。保留獨立關閉計時器、2 秒冷卻、啟動保護與不延長脈衝的限制。
+- NVS 設定改為固定欄位的 v2 紀錄，保留 CRC 與寫後讀回驗證。v1 的 Wi-Fi、設定密碼與 HomeKit 配對碼完整載入，時間預設 200 ms，讀取時不回寫；兩組 IR 紀錄不變。API 狀態回傳 relay_pulse_ms，舊客戶端未提供此欄位時沿用既有值。
+- `python tools/simulate.py test` 通過：涵蓋 1／375／800 ms 的 HomeKit 與 IR 計時、主迴圈停頓時獨立關閉、忙碌與冷卻、實際 TimedRelay 參數、575 ms 設定存取與開機套用、無效值拒絕，以及舊紀錄載入與逐位元組損毀測試。
+- `python tools/test_relay_settings.py`、`python tools/test_setup_page.py`、`python tools/test_setup_tabs.py`、`python tools/test_setup_resilience.py` 全部通過。新增測試涵蓋五種寬度、時間範圍、草稿保留與放棄、隱藏欄位驗證與聚焦、學習期間禁止儲存、儲存失敗重試及成功重啟。已檢查 `build/setup-relay-mobile.png` 與 `build/setup-relay-desktop.png`。
+- 已重新產生 SetupPage.h；`git diff --check` 通過。標準韌體建置已嘗試，但此環境缺少 `.tools/arduino-cli/arduino-cli.exe` 與 ESP32 Arduino 工具鏈，尚未完成 ESP32 編譯。本次未連線或燒錄實機，也未觸發實體繼電器。
+
 ## 2026-11-16 設定頁分頁（原始碼，未燒錄）
 
 - 沿用原有顏色、字型與文案，改成 Wi-Fi、Infrared、RFID、Other settings 四個分頁；RFID 僅預留空白分頁，HomeKit 資訊移到 Other settings。

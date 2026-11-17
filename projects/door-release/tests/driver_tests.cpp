@@ -20,10 +20,18 @@ int main() {
   relay.permit(true);
   CHECK(!relay.start(0)); CHECK(!relay.start(801));
   CHECK(fakeGpio == 0);
+  CHECK(!relay.start(200, door::Source::Nfc));
+  relay.permitNfc(true); CHECK(relay.start(200, door::Source::Nfc)); CHECK(fakeGpio == 1);
+  relay.permit(false); CHECK(fakeGpio == 1); relay.permitNfc(false); CHECK(fakeGpio == 0);
+  relay.permit(true);
   CHECK(door::kPulseMs == 200);
   CHECK(relay.start(door::kPulseMs)); CHECK(fakeTimer.armed);
   CHECK(fakeTimer.duration == 200000); CHECK(fakeGpio == 1);
   fakeExpire(); CHECK(!relay.active()); CHECK(fakeGpio == 0);
+  for (uint32_t ms : {1u, 375u, 800u}) {
+    CHECK(relay.start(ms)); CHECK(fakeTimer.duration == uint64_t(ms) * 1000);
+    fakeExpire(); CHECK(!relay.active()); CHECK(!fakeGpio);
+  }
 
   CHECK(relay.start(400)); relay.permit(false);
   CHECK(!relay.active()); CHECK(fakeGpio == 0);

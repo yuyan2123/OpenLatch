@@ -180,10 +180,37 @@ void randomized_invariants() {
     CHECK(r.relay.trace[i+1].at - r.relay.trace[i].at <= 200);
   }
 }
+void configured_duration() {
+  for (uint32_t ms : {1u, 375u, 800u}) {
+    for (bool ir : {false, true}) {
+      Rig r; r.controller.boot(0, ms); r.ready();
+      CHECK((ir ? r.controller.infrared(r.now(), true) : r.on()) == Result::Accepted);
+      r.advance(ms - 1, false); CHECK(r.relay.high);
+      CHECK(r.on() == Result::Busy);
+      r.advance(1, false); CHECK(!r.relay.high);
+      CHECK(r.relay.trace.back().at == door::kBootGuardMs + ms);
+      CHECK(r.on() == Result::Cooldown);
+      r.advance(door::kCooldownMs); CHECK(r.on() == Result::Accepted);
+    }
+  }
+  Rig bad; bad.controller.boot(0, 801); bad.ready(); CHECK(bad.on() == Result::Fault);
+  CHECK(!bad.relay.high);
+}
+void nfc_permissions_and_coexistence() {
+  Rig r; r.ready(); CHECK(r.controller.nfc(r.now()) == Result::Unauthorized);
+  CHECK(r.controller.nfc(r.now(), true) == Result::Accepted);
+  CHECK(r.on() == Result::Busy);
+  r.network(false, false); CHECK(r.relay.high);  // A locally verified NFC pulse is independent of HAP connectivity.
+  r.advance(200); CHECK(!r.relay.high);
+  CHECK(r.controller.nfc(r.now(), true) == Result::Cooldown);
+  r.advance(2000); r.controller.inhibit(r.now(), true);
+  CHECK(r.controller.nfc(r.now(), true) == Result::Inhibited);
+  r.controller.inhibit(r.now(), false); CHECK(r.controller.infrared(r.now(), true) == Result::Accepted);
+}
 int main() {
   boot_and_auth(); pulse_and_duplicates(); independent_deadline();
   disconnection_and_no_queue(); reboot_and_fault(); off_and_ir();
   limits_and_driver_failure(); millis_wraparound(); randomized_invariants();
-  infrared_and_homekit_coexistence();
+  infrared_and_homekit_coexistence(); configured_duration(); nfc_permissions_and_coexistence();
   std::cout << "PASS: 10 controller scenario groups, including 20,000 randomized events.\n";
 }

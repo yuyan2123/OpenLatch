@@ -65,6 +65,26 @@ door::DeviceSettings valid() {
 }
 void settings_validation() {
   auto settings = valid(); CHECK(door::validSettings(settings));
+  CHECK(settings.relayPulseMs == 200);
+  for (const auto* pulse : {"1", "375", "800"}) {
+    CHECK(!door::updateRelayPulse(settings, pulse)); CHECK(door::validSettings(settings));
+  }
+  for (const auto* pulse : {"", "0", "801", "-1", "1.5", "2e2", " 200", "200 ", "999999999999", "abc"}) {
+    CHECK(door::updateRelayPulse(settings, pulse)); CHECK(settings.relayPulseMs == 800);
+  }
+  settings.relayPulseMs = 0; CHECK(!door::validSettings(settings));
+  settings.relayPulseMs = 801; CHECK(!door::validSettings(settings));
+  settings.relayPulseMs = 375;
+  CHECK(settings.nfcMaxFailures == 5); CHECK(settings.nfcLockoutSeconds == 60);
+  CHECK(!door::updateNfcLimits(settings, "1", "1")); CHECK(door::validSettings(settings));
+  CHECK(!door::updateNfcLimits(settings, "20", "3600")); CHECK(door::validSettings(settings));
+  for (const auto* value : {"", "0", "21", "-1", "1.5", "1e1", " 5", "4294967297"}) {
+    CHECK(door::updateNfcLimits(settings, value, "60")); CHECK(settings.nfcMaxFailures == 20);
+  }
+  for (const auto* value : {"", "0", "3601", "-1", "1.5", " 60", "4294967297"}) {
+    CHECK(door::updateNfcLimits(settings, "5", value)); CHECK(settings.nfcLockoutSeconds == 3600);
+    CHECK(settings.nfcMaxFailures == 20);  // Rejected updates are atomic.
+  }
   CHECK(!door::updateSettings(settings, "Home", "password1", false, "PrivateSetupPassword"));
   CHECK(std::string(settings.ssid) == "Home"); CHECK(std::string(settings.wifiPassword) == "password1");
   CHECK(!door::updateSettings(settings, "Home", "", false, ""));
@@ -99,10 +119,18 @@ void settings_storage() {
   resetNvs(); SettingsStore store; auto settings = valid();
   CHECK(store.load(settings) == SettingsStore::Load::Missing);
   CHECK(store.save(settings)); CHECK(nvsWrites == 1);
+  settings.relayPulseMs = 537;
+  settings.nfcMaxFailures = 3; settings.nfcLockoutSeconds = 120;
   CHECK(!door::updateSettings(settings, "Home", "password1", false, "")); CHECK(store.save(settings));
   SettingsStore reboot; auto restored = valid();
   CHECK(reboot.load(restored) == SettingsStore::Load::Loaded);
-  CHECK(std::memcmp(&settings, &restored, sizeof(settings)) == 0);
+  CHECK(restored.relayPulseMs == 537);
+  CHECK(std::string(settings.ssid) == restored.ssid);
+  CHECK(std::string(settings.wifiPassword) == restored.wifiPassword);
+  CHECK(std::string(settings.pairingCode) == restored.pairingCode);
+  CHECK(std::string(settings.setupPassword) == restored.setupPassword);
+  CHECK(settings.relayPulseMs == restored.relayPulseMs);
+  CHECK(restored.nfcMaxFailures == 3); CHECK(restored.nfcLockoutSeconds == 120);
   const auto goodRecord = nvsRecord;
   for (size_t byte = 0; byte < goodRecord.size(); ++byte) {
     nvsRecord = goodRecord; nvsRecord[byte] ^= 1;
@@ -129,8 +157,54 @@ void settings_storage() {
   nvsOpenFails = true; SettingsStore unavailable;
   CHECK(unavailable.load(restored) == SettingsStore::Load::Error); CHECK(!unavailable.save(settings));
 }
+void legacy_settings() {
+  resetNvs(); SettingsStore store; auto settings = valid();
+  CHECK(!door::updateSettings(settings, "Existing Home", "keep-password", false, "PrivateSetupPassword"));
+  CHECK(store.load(settings) == SettingsStore::Load::Missing); CHECK(store.save(settings));
+  // Version 1 has the same 171 credential bytes, followed immediately by CRC.
+  nvsRecord.resize(179); nvsRecord[2] = 1;
+  uint32_t crc = 0xffffffffu;
+  for (size_t i = 0; i < 175; ++i) {
+    crc ^= nvsRecord[i];
+    for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320u : 0u);
+  }
+  crc = ~crc;
+  for (int i = 0; i < 4; ++i) nvsRecord[175 + i] = uint8_t(crc >> (8 * i));
+  const auto legacy = nvsRecord;
+  SettingsStore upgrade; auto restored = valid(); restored.relayPulseMs = 800;
+  CHECK(upgrade.load(restored) == SettingsStore::Load::Loaded);
+  CHECK(restored.relayPulseMs == 200);
+  CHECK(std::string(restored.ssid) == "Existing Home");
+  CHECK(std::string(restored.wifiPassword) == "keep-password");
+  CHECK(std::string(restored.setupPassword) == "PrivateSetupPassword");
+  CHECK(std::string(restored.pairingCode) == "59263814");
+  CHECK(nvsRecord == legacy);  // Loading does not write or risk credentials.
+  restored.relayPulseMs = 650; CHECK(upgrade.save(restored));
+  SettingsStore reboot; CHECK(reboot.load(restored) == SettingsStore::Load::Loaded);
+  CHECK(restored.relayPulseMs == 650); CHECK(nvsRecord.size() == 191); CHECK(nvsRecord[2] == 3);
+  for (size_t i = 0; i < legacy.size(); ++i) {
+    nvsRecord = legacy; nvsRecord[i] ^= 1;
+    SettingsStore bad; CHECK(bad.load(restored) == SettingsStore::Load::Error);
+  }
+}
+void version2_settings() {
+  resetNvs(); SettingsStore store; auto settings = valid(); settings.relayPulseMs = 650;
+  CHECK(store.load(settings) == SettingsStore::Load::Missing); CHECK(store.save(settings));
+  nvsRecord.resize(183); nvsRecord[2] = 2;
+  uint32_t crc = 0xffffffffu;
+  for (size_t i = 0; i < 179; ++i) {
+    crc ^= nvsRecord[i];
+    for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320u : 0u);
+  }
+  crc = ~crc; for (int i = 0; i < 4; ++i) nvsRecord[179 + i] = uint8_t(crc >> (8 * i));
+  const auto before = nvsRecord;
+  SettingsStore upgrade; settings.nfcMaxFailures = 20; settings.nfcLockoutSeconds = 3600;
+  CHECK(upgrade.load(settings) == SettingsStore::Load::Loaded);
+  CHECK(settings.relayPulseMs == 650); CHECK(settings.nfcMaxFailures == 5); CHECK(settings.nfcLockoutSeconds == 60);
+  CHECK(nvsRecord == before);
+}
 int main() {
   setup_window_and_recovery(); first_boot_and_rollover(); infrared_and_user_activity_windows();
-  settings_validation(); settings_storage();
+  settings_validation(); settings_storage(); legacy_settings(); version2_settings();
   std::cout << "PASS: setup window, persistent offline AP recovery, Wi-Fi validation and actual settings NVS adapter.\n";
 }

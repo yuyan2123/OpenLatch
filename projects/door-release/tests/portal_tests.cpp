@@ -16,7 +16,8 @@ struct Fixture {
   door::Infrared setupIr{setupIrStore};
   TimedRelay relay;
   door::Controller controller{relay};
-  SetupPortal portal{settings, store, ir, setupIr, controller, relay};
+  door::NfcAttemptLimiter nfcAttempts;
+  SetupPortal portal{settings, store, ir, setupIr, controller, relay, nfcAttempts};
   Fixture(bool credentials = false) {
     fakeMillis = 0; WiFi = {};
     nvsRecord.clear(); nvsPending.clear(); nvsWrites = 0;
@@ -25,6 +26,7 @@ struct Fixture {
     if (credentials) { std::strcpy(settings.ssid, "Home"); std::strcpy(settings.wifiPassword, "secretpass"); }
     CHECK(store.load(settings) == SettingsStore::Load::Missing); CHECK(store.save(settings));
     CHECK(relay.begin()); controller.boot(0); CHECK(ir.begin(0)); CHECK(setupIr.begin(0));
+    nfcAttempts.begin();
     portal.begin(0, true, true);
   }
   void token() {
@@ -42,6 +44,7 @@ void authentication_and_request_guards() {
   fakeWeb->request("/"); CHECK(fakeWeb->code == 200); CHECK(!fakeWeb->authenticated);
   CHECK(fakeWeb->body.find("Add door button") != std::string::npos);
   fakeWeb->request("/api/status"); CHECK(fakeWeb->code == 200);
+  CHECK(fakeWeb->body.find("\"relay_pulse_ms\":200") != std::string::npos);
   CHECK(fakeWeb->body.find("wifiPassword") == std::string::npos);
   CHECK(fakeWeb->body.find(door::kDefaultSetupPassword) == std::string::npos);
   CHECK(fakeWeb->outputHeaders["Cache-Control"] == "no-store");
@@ -102,17 +105,76 @@ void expiry_and_late_offline_recovery() {
 void save_validation_and_restart() {
   Fixture f; f.token();
   fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 400); CHECK(!f.portal.restarting());
-  fakeWeb->arguments = {{"ssid", "New Home"}, {"wifi_password", "newpassword"}, {"setup_password", ""}};
+  fakeWeb->arguments = {{"ssid", "New Home"}, {"wifi_password", "newpassword"}, {"setup_password", ""}, {"relay_pulse_ms", "575"}};
   nvsWriteFails = true;
   fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 500); CHECK(!f.portal.restarting());
   CHECK(!f.settings.ssid[0]);
+  CHECK(f.settings.relayPulseMs == 200);
   nvsWriteFails = false; fakeMillis = 3000;
   fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 200); CHECK(f.portal.restarting());
   CHECK(!f.portal.restartDue(3999)); CHECK(f.portal.restartDue(4000)); CHECK(!fakeGpio);
   SettingsStore reboot; door::DeviceSettings loaded;
   CHECK(reboot.load(loaded) == SettingsStore::Load::Loaded); CHECK(std::string(loaded.ssid) == "New Home");
   CHECK(std::string(loaded.wifiPassword) == "newpassword");
+  CHECK(loaded.relayPulseMs == 575);
+  // Apply the persisted duration through the same boot path as the firmware.
+  f.controller.boot(fakeMillis, loaded.relayPulseMs);
+  f.controller.connectivity(fakeMillis + 3000, true, true); f.relay.permit(true);
+  CHECK(f.controller.homekit(fakeMillis + 3000, true, true) == door::Result::Accepted);
+  CHECK(fakeTimer.duration == 575000); f.relay.stop();
   fakeWeb->request("/api/ir/learn", HTTP_POST); CHECK(fakeWeb->code == 503); CHECK(!f.ir.learning());
+}
+void relay_time_validation() {
+  Fixture f; f.token();
+  fakeWeb->arguments = {{"ssid", ""}, {"wifi_password", ""}, {"setup_password", ""}};
+  const int writes = nvsWrites;
+  for (const auto* value : {"", "0", "801", "-1", "1.5", "2e2", " 200", "4294967297"}) {
+    fakeWeb->arguments["relay_pulse_ms"] = value;
+    fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 400);
+    CHECK(!f.portal.restarting()); CHECK(!fakeGpio); CHECK(nvsWrites == writes);
+  }
+  fakeWeb->arguments["relay_pulse_ms"] = std::string("200\0junk", 8);
+  fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 400); CHECK(nvsWrites == writes);
+  // Older clients omit the field and retain the current duration.
+  f.settings.relayPulseMs = 650; fakeWeb->arguments.erase("relay_pulse_ms");
+  fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 200);
+  SettingsStore reboot; door::DeviceSettings loaded;
+  CHECK(reboot.load(loaded) == SettingsStore::Load::Loaded); CHECK(loaded.relayPulseMs == 650);
+}
+void nfc_limits_validation_and_status() {
+  Fixture f; f.token();
+  fakeWeb->arguments = {{"ssid", ""}, {"wifi_password", ""}, {"setup_password", ""},
+                        {"nfc_max_failures", "3"}, {"nfc_lockout_seconds", "120"}};
+  const int writes = nvsWrites;
+  for (const auto* invalid : {"", "0", "21", "-1", "1.5", " 5", "999999999"}) {
+    fakeWeb->arguments["nfc_max_failures"] = invalid;
+    fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 400);
+    CHECK(!f.portal.restarting()); CHECK(nvsWrites == writes);
+  }
+  fakeWeb->arguments["nfc_max_failures"] = "3";
+  for (const auto* invalid : {"", "0", "3601", "-1", "1.5", " 60", "999999999"}) {
+    fakeWeb->arguments["nfc_lockout_seconds"] = invalid;
+    fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 400); CHECK(nvsWrites == writes);
+  }
+  fakeWeb->arguments["nfc_lockout_seconds"] = std::string("60\0bad", 6);
+  fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 400);
+  fakeWeb->arguments.erase("nfc_lockout_seconds");
+  fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 400);
+  f.nfcAttempts.begin(1, 60);
+  const auto attempt = f.nfcAttempts.start(0);
+  CHECK(!f.nfcAttempts.complete(0, attempt, door::NfcAttemptLimiter::Verdict::InvalidCredential));
+  f.portal.nfcStatus(true, true, true);
+  fakeWeb->request("/api/status"); CHECK(fakeWeb->code == 200);
+  CHECK(fakeWeb->body.find("\"nfc_failures\":1") != std::string::npos);
+  CHECK(fakeWeb->body.find("\"nfc_lockout_remaining_ms\":60000") != std::string::npos);
+  CHECK(fakeWeb->body.find("\"nfc_connected\":true") != std::string::npos);
+  // HTTP never accepts authentication outcomes or resets the limiter.
+  fakeWeb->request("/api/nfc/unlock", HTTP_POST); CHECK(fakeWeb->code == 404); CHECK(!fakeGpio);
+  fakeWeb->arguments["nfc_lockout_seconds"] = "120";
+  fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 200);
+  SettingsStore reboot; door::DeviceSettings loaded;
+  CHECK(reboot.load(loaded) == SettingsStore::Load::Loaded);
+  CHECK(loaded.nfcMaxFailures == 3); CHECK(loaded.nfcLockoutSeconds == 120);
 }
 void setup_button_learning_and_reopening() {
   Fixture f(true); WiFi.connected = true; fakeWeb->host = "192.168.1.42";
@@ -232,7 +294,7 @@ void full_button_list_is_rejected() {
 }
 int main() {
   authentication_and_request_guards(); browser_learning_and_forget();
-  expiry_and_late_offline_recovery(); save_validation_and_restart();
+  expiry_and_late_offline_recovery(); save_validation_and_restart(); relay_time_validation(); nfc_limits_validation_and_status();
   setup_button_learning_and_reopening(); activity_and_status_polling();
   multiple_buttons_removal_and_conflicts(); full_button_list_is_rejected();
   std::cout << "PASS: no-login routes, CSRF guards, independent IR buttons, activity windows, AP recovery and save/restart.\n";

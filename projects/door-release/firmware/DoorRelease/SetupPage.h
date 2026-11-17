@@ -149,7 +149,7 @@ dialog::backdrop{background:color-mix(in srgb,var(--color-ink) 25%,transparent)}
 <section class="remote-controls" aria-labelledby="ir-heading">
   <h2 id="ir-heading">Remote buttons</h2><p class="section-intro">Save up to 16 buttons per action. Keep the two actions on different buttons.</p>
   <div class="remote">
-    <h3>Open the door</h3><p class="description">Saved buttons work offline. A press gives a 200 ms pulse with a 2 second cooldown.</p>
+    <h3>Open the door</h3><p id="door-timing" class="description">Saved buttons work offline. A press gives a 200 ms pulse with a 2 second cooldown.</p>
     <p id="ir-state" class="key">Reading button status…</p>
     <ul id="ir-buttons" class="button-list" aria-label="Saved door buttons"></ul>
     <div class="actions"><button id="learn" type="button" disabled>Add door button</button><button id="cancel" class="secondary" type="button" disabled>Cancel learning</button></div>
@@ -167,8 +167,21 @@ dialog::backdrop{background:color-mix(in srgb,var(--color-ink) 25%,transparent)}
   <details><summary>How to add a button</summary><ol class="steps"><li>Select Add door button or Add setup button. Door release pauses during learning.</li><li>Release all buttons for 500 ms, then press the intended button.</li><li>Release for another 500 ms and press the same button again within 30 seconds.</li></ol><p class="section-intro">Saved buttons are retained. Learning does not open the door. Keep the receiver in a protected interior location.</p></details>
 </section>
 </div>
-<div id="page-rfid" role="tabpanel" aria-labelledby="tab-rfid" tabindex="0" hidden></div>
+<div id="page-rfid" role="tabpanel" aria-labelledby="tab-rfid" tabindex="0" hidden>
+<section aria-labelledby="rfid-heading">
+  <h2 id="rfid-heading">RFID</h2>
+  <div class="field"><label for="nfc-max-failures">Failed attempt limit</label><input id="nfc-max-failures" name="nfc_max_failures" form="settings-form" type="number" min="1" max="20" step="1" required inputmode="numeric" aria-describedby="nfc-limit-hint" disabled><small id="nfc-limit-hint">1–20 consecutive failures.</small></div>
+  <div class="field"><label for="nfc-lockout-seconds">Lockout time (seconds)</label><input id="nfc-lockout-seconds" name="nfc_lockout_seconds" form="settings-form" type="number" min="1" max="3600" step="1" required inputmode="numeric" aria-describedby="nfc-lockout-hint" disabled><small id="nfc-lockout-hint">1–3600 seconds.</small></div>
+  <button id="save-rfid" class="save" type="submit" form="settings-form" disabled>Save and restart</button>
+  <p id="nfc-state" class="ir-message" role="status" aria-live="polite">Reading reader status…</p>
+</section>
+</div>
 <div id="page-other" role="tabpanel" aria-labelledby="tab-other" tabindex="0" hidden>
+<section aria-labelledby="relay-heading">
+  <h2 id="relay-heading">Door release</h2>
+  <div class="field"><label for="relay-pulse">Relay on time (ms)</label><input id="relay-pulse" name="relay_pulse_ms" form="settings-form" type="number" min="1" max="800" step="1" required inputmode="numeric" aria-describedby="relay-hint" disabled><small id="relay-hint">1–800 ms. Applies to HomeKit and infrared.</small></div>
+  <button id="save-other" class="save" type="submit" form="settings-form" disabled>Save and restart</button>
+</section>
 <section class="pairing" aria-labelledby="pairing-heading"><h2 id="pairing-heading">HomeKit</h2><p class="section-intro">Add this device in the Apple Home app.</p><div><span class="hint">HomeKit pairing code</span><code id="pairing-code">Loading…</code></div><small>Existing HomeKit pairings are retained when Wi-Fi changes.</small></section>
 <p class="auth-note">Web login is temporarily disabled. The setup hotspot still requires its password.</p>
 </div>
@@ -188,7 +201,7 @@ let connectionFailed=false,connectionNotice=false,failures=0,restarting=false,re
 let requestTail=Promise.resolve(),countdownUntil=0;
 let currentPage="wifi",pendingPage=null,savedSettings=null;
 const pageNames=["wifi","infrared","rfid","other"],unsavedDialog=byId("unsaved-dialog");
-function settingsValues(){return [byId("ssid").value,byId("wifi-password").value,byId("open-network").checked,byId("setup-password").value]}
+function settingsValues(){return [byId("ssid").value,byId("wifi-password").value,byId("open-network").checked,byId("setup-password").value,byId("relay-pulse").value,byId("nfc-max-failures").value,byId("nfc-lockout-seconds").value]}
 function unsavedSettings(){return savedSettings!==null&&JSON.stringify(settingsValues())!==JSON.stringify(savedSettings)}
 function selectPage(name){
   currentPage=name;
@@ -218,7 +231,7 @@ document.querySelector('[role="tablist"]').addEventListener("keydown",event=>{
 byId("unsaved-cancel").addEventListener("click",()=>unsavedDialog.close("cancel"));
 byId("unsaved-discard").addEventListener("click",()=>{
   const target=pendingPage;
-  [byId("ssid").value,byId("wifi-password").value,byId("open-network").checked,byId("setup-password").value]=savedSettings;
+  [byId("ssid").value,byId("wifi-password").value,byId("open-network").checked,byId("setup-password").value,byId("relay-pulse").value,byId("nfc-max-failures").value,byId("nfc-lockout-seconds").value]=savedSettings;
   unsavedDialog.close("discard");controls();selectPage(target);
 });
 byId("unsaved-save").addEventListener("click",async()=>{
@@ -231,8 +244,12 @@ function notice(message,error=false,retry=false){connectionNotice=false;byId("no
 function controls(){
   const editable=initialized&&!busy&&!stopped,ready=editable&&!connectionFailed,learning=Boolean(lastState&&(lastState.ir_learning||lastState.setup_ir_learning));
   document.querySelectorAll("#settings-form input").forEach(element=>element.disabled=!editable);
+  byId("relay-pulse").disabled=!editable;
+  byId("nfc-max-failures").disabled=!editable;byId("nfc-lockout-seconds").disabled=!editable;
   byId("wifi-password").disabled=!editable||byId("open-network").checked;
   byId("save").disabled=!ready||learning;byId("save-hint").textContent=learning?"Finish or cancel button learning before saving.":"Changes take effect after restart.";
+  byId("save-other").disabled=byId("save").disabled;
+  byId("save-rfid").disabled=byId("save").disabled;
   byId("learn").disabled=!ready||learning||!lastState||!lastState.hardware_ready||!lastState.ir_ready||lastState.ir_count>=lastState.ir_capacity;
   byId("cancel").disabled=!ready||!lastState||!lastState.ir_learning;
   byId("forget").disabled=!ready||learning||Boolean(lastState&&lastState.ir_ready&&!lastState.ir_count);
@@ -308,7 +325,9 @@ function render(state){
   const renewed=stopped||token!==state.token;
   if(connectionNotice||stopped)notice("");
   stopped=false;connectionFailed=false;failures=0;
-  lastState=state;token=state.token;if(!initialized){byId("ssid").value=state.ssid;savedSettings=[state.ssid,"",false,""];initialized=true}
+  lastState=state;token=state.token;if(!initialized){byId("ssid").value=state.ssid;byId("relay-pulse").value=state.relay_pulse_ms??200;byId("nfc-max-failures").value=state.nfc_max_failures??5;byId("nfc-lockout-seconds").value=state.nfc_lockout_seconds??60;savedSettings=settingsValues();initialized=true}
+  byId("door-timing").textContent="Saved buttons work offline. A press gives a "+(state.relay_pulse_ms??200)+" ms pulse with a 2 second cooldown.";
+  byId("nfc-state").textContent=state.nfc_lockout_remaining_ms>0?"Home Key paused. "+Math.ceil(state.nfc_lockout_remaining_ms/1000)+" seconds remaining.":!state.nfc_configured?"Reader connection is not configured.":!state.nfc_provisioned?"Set up Home Key in Apple Home.":!state.nfc_connected?"Waiting for the outdoor reader.":(state.nfc_failures??0)+" failed attempts. Reader connected.";
   byId("network").textContent=state.connected?"Connected to "+state.ssid:"Setup hotspot: "+state.ap_name;
   byId("address").textContent=state.ip;
   syncCountdown(state,renewed);
@@ -355,12 +374,16 @@ document.addEventListener("visibilitychange",()=>{if(document.visibilityState===
 window.addEventListener("online",()=>refresh());
 byId("open-network").addEventListener("change",controls);
 async function saveSettings(){
-  if(byId("save").disabled||!byId("settings-form").reportValidity())return false;
+  if(byId("save").disabled)return false;
+  const invalid=[...byId("settings-form").elements].find(element=>element.willValidate&&!element.validity.valid);
+  if(invalid){selectPage(invalid.closest('[role="tabpanel"]').id.slice(5));invalid.reportValidity();return false}
   const body=new URLSearchParams(new FormData(byId("settings-form")));body.set("wifi_password",byId("open-network").checked?"":byId("wifi-password").value);
   busy=true;byId("save").setAttribute("aria-busy","true");controls();notice("Saving settings…");
   try{const data=await request("/api/settings",body.toString());restarting=true;stopped=true;clearTimeout(refreshTimer);clearTimeout(activityTimer);byId("wifi-password").value="";byId("setup-password").value="";savedSettings=settingsValues();notice(data.message+" Use http://"+lastState.hostname+"/ after reconnecting, or http://192.168.4.1/ on the setup hotspot.");byId("window").textContent="Restarting";return true}
   catch(error){reportError(error);return false}finally{busy=false;byId("save").removeAttribute("aria-busy");controls();if(!restarting)scheduleRefresh(1000)}
 }
+// Validate after revealing the owning tab so hidden fields can receive focus.
+byId("settings-form").noValidate=true;
 byId("settings-form").addEventListener("submit",event=>{event.preventDefault();saveSettings()});
 async function buttonAction(button,path,body=""){
   busy=true;button.setAttribute("aria-busy","true");controls();

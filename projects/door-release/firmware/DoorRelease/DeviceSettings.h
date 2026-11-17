@@ -2,6 +2,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include "Controller.h"
+#include "NfcAttemptLimiter.h"
 
 namespace door {
 constexpr const char* kDefaultSetupPassword = "DoorSetup-2026";
@@ -10,6 +12,9 @@ struct DeviceSettings {
   char wifiPassword[65]{};
   char pairingCode[9]{};
   char setupPassword[64]{};
+  uint32_t relayPulseMs = kPulseMs;
+  uint32_t nfcMaxFailures = kNfcMaxFailures;
+  uint32_t nfcLockoutSeconds = kNfcLockoutSeconds;
 };
 inline bool validPairingCode(const char* code) {
   if (std::strlen(code) != 8) return false;
@@ -47,9 +52,43 @@ inline bool validSettings(const DeviceSettings& settings) {
       !std::memchr(settings.setupPassword, 0, sizeof(settings.setupPassword))) return false;
   for (const char* c = settings.ssid; *c; ++c)
     if (static_cast<unsigned char>(*c) < 32 || *c == 127) return false;
-  return validWifiPassword(settings.wifiPassword) && validPairingCode(settings.pairingCode) &&
+  return settings.relayPulseMs > 0 && settings.relayPulseMs <= kMaxPulseMs &&
+         validNfcLimits(settings.nfcMaxFailures, settings.nfcLockoutSeconds) &&
+         validWifiPassword(settings.wifiPassword) && validPairingCode(settings.pairingCode) &&
          printable(settings.setupPassword, 12, 63) &&
          (settings.ssid[0] || !settings.wifiPassword[0]);
+}
+inline const char* updateRelayPulse(DeviceSettings& settings, const char* value) {
+  const size_t length = std::strlen(value);
+  if (!length || length > 3) return "Relay on time must be a whole number from 1 to 800 ms.";
+  uint32_t ms = 0;
+  for (size_t i = 0; i < length; ++i) {
+    if (value[i] < '0' || value[i] > '9') return "Relay on time must be a whole number from 1 to 800 ms.";
+    ms = ms * 10 + uint32_t(value[i] - '0');
+  }
+  if (!ms || ms > kMaxPulseMs) return "Relay on time must be a whole number from 1 to 800 ms.";
+  settings.relayPulseMs = ms;
+  return nullptr;
+}
+inline bool parseNfcLimit(const char* value, uint32_t maximum, uint32_t& output) {
+  const size_t length = std::strlen(value);
+  if (!length || length > 4) return false;
+  uint32_t number = 0;
+  for (size_t i = 0; i < length; ++i) {
+    if (value[i] < '0' || value[i] > '9') return false;
+    number = number * 10 + uint32_t(value[i] - '0');
+  }
+  if (!number || number > maximum) return false;
+  output = number;
+  return true;
+}
+inline const char* updateNfcLimits(DeviceSettings& settings, const char* failures, const char* seconds) {
+  uint32_t count = 0, duration = 0;
+  if (!parseNfcLimit(failures, 20, count)) return "Failed attempt limit must be a whole number from 1 to 20.";
+  if (!parseNfcLimit(seconds, 3600, duration)) return "Lockout time must be a whole number from 1 to 3600 seconds.";
+  settings.nfcMaxFailures = count;
+  settings.nfcLockoutSeconds = duration;
+  return nullptr;
 }
 // A single validator serves the HTTP form and desktop tests. Empty passwords
 // retain existing values only when the SSID is unchanged and open=false.
