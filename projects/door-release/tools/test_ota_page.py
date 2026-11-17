@@ -9,6 +9,7 @@ def image():
     data = bytearray(512)
     data[0] = 0xe9; data[1] = 2; data[12] = 5; data[23] = 1
     data[32:36] = bytes.fromhex("3254cdab")
+    data[-32:] = bytes(range(1, 33))
     return bytes(data)
 
 
@@ -19,6 +20,7 @@ def choose(page, data=None, name="DoorRelease.ino.bin"):
 
 def main():
     qa.reset()
+    qa.STATE["password_required"] = True
     server = ThreadingHTTPServer(("127.0.0.1", 0), qa.Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     errors = []
@@ -30,7 +32,7 @@ def main():
             page.goto(f"http://127.0.0.1:{server.server_port}/")
             qa.wait_js(page, "!document.querySelector('#save').disabled")
             page.locator("#tab-other").click()
-            assert page.locator("#firmware-version").inner_text() == "1.3.0-ota"
+            assert page.locator("#firmware-version").inner_text() == "1.4.0-verified-ota"
             for width in (320, 390, 768, 1280, 1920):
                 page.set_viewport_size({"width": width, "height": 844})
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), width
@@ -58,7 +60,7 @@ def main():
             page.locator("#relay-pulse").fill("200")
             page.locator("#firmware-password").fill("WrongSetupPassword")
             page.locator("#firmware-upload").click()
-            qa.wait_js(page, "document.querySelector('#firmware-status').textContent.includes('Incorrect setup password')")
+            qa.wait_js(page, "document.querySelector('#firmware-status').textContent.includes('Incorrect current setup password')")
             assert page.locator("#firmware-password").input_value() == ""
             assert not qa.OTA_REQUESTS
             qa.OTA_FAILURE = True
@@ -80,10 +82,14 @@ def main():
             assert page.locator("#tab-rfid").is_disabled()
             assert page.locator("#firmware-progress").is_visible()
             qa.wait_js(page, "document.querySelector('#window').textContent === 'Restarting'")
+            assert "Update complete" not in page.locator("#firmware-status").inner_text()
+            assert page.locator("#firmware-progress").get_attribute("value") != "100"
+            qa.wait_js(page, "document.querySelector('#firmware-status').textContent.includes('Update complete')")
             assert qa.OTA_REQUESTS == [image(), image()]
             assert page.locator("#firmware-progress").get_attribute("value") == "100"
             assert page.locator("#firmware-file").evaluate("e => e.files.length === 0")
             assert page.locator("#firmware-password").input_value() == ""
+            assert page.locator("#firmware-form :user-invalid").count() == 0
             assert qa.MAX_IN_FLIGHT == 1, qa.MAX_IN_FLIGHT
             output = qa.ROOT / "build"
             page.set_viewport_size({"width": 390, "height": 844})

@@ -1,5 +1,18 @@
 # 虛擬驗證紀錄
 
+## 2026-11-17 密碼模式、HTTP 限制與更新完成確認（1.4.0-verified-ota，未燒錄）
+
+- 新增持久化管理密碼模式：預設免密碼修改與 OTA；啟用後，設定／IR 修改使用目前的設定密碼，OTA 也須目前密碼。更改密碼或停用保護先驗證舊值，不能由新密碼或新模式自行授權。熱點在兩種模式都保留密碼。NVS v4 以 CRC／讀回驗證儲存旗標，v1–v3 載入保留原有設定並沿用免密碼管理；載入不回寫。
+- 設定頁使用本專案的 BoundedWebServer／HttpRequestGuard，保留 Arduino 路由與回應 API，不修改 SDK。解析 body 前即限制 2,048-byte 標頭、24 個欄位、單行 512 bytes、1,024-byte 設定 body；拒絕重複標頭、模糊長度、chunked、錯誤方法與不支援格式。標頭／一般 body 各有 5 秒絕對與 2 秒閒置期限；OTA 限制 app 槽容量、15 秒閒置與 180 秒總期限。每次 poll 最多讀入 512 bytes；逾時、斷線或關閉設定窗口會中止未完成 OTA。
+- 更新完成回應改為 202 與目標 ESP image SHA-256，表示已驗證、等待重啟。前端核對檔案尾端 digest，再等待新的 boot_id、相同 digest 與 firmware_healthy，才顯示 Update complete／100%。映像不符、未重啟與 90 秒確認逾時不報成功，也不重送上傳。成功後重設表單驗證狀態，空白欄位不顯示錯誤邊框。
+- 覆寫 Arduino 的 verifyRollbackLater，避免 setup 前自動確認 OTA。繼電器／控制器、設定儲存、IR 儲存與預期 NFC 初始化健康 3 秒後才確認 pending image；30 秒未通過要求回滾。pending boot 期間啟用 loop watchdog，確認後解除。本機測試檢查確認、失敗、時鐘溢位及 SHA-256 讀取失敗；真實 bootloader／斷電行為仍待實機驗證。
+- 新增直接編譯 production HomeKeyManager／HomeKeyServices 的整合測試，以主機 ESP-NOW、FreeRTOS、HAP 與加密結果替身連接真實 IndoorSession／ReaderSession。涵蓋 APDU 往返、結果單次消費、249／250 ms、暫停／憑證修改／離線撤銷、錯誤計數、逾時／取消／儲存錯誤不計次、驗證步數上限、配對撤銷與 mutex 忙碌、佈建長度與儲存錯誤、來源 MAC、佇列滿載、task／queue／radio 初始化錯誤。替身固定使用公開測試配置，不會讀取真實私密 profile，也禁止以主機測試旗標建置 Arduino 韌體；不代表 Apple 加密或實機配對已驗證。
+- 整合測試重現並修正 Tag 先於 Ping ACK 到達時被過早消費的問題。現在保留通知，待目前請求完成後才啟動驗證。主迴圈消費結果時也直接檢查 Wi-Fi 連線，避免工作尚未更新 connected 狀態時接受離線結果。
+- `python tools/simulate.py test` 九組原生程式全部通過，保留 20,000 個隨機控制事件；NFC profile 的兩項 Python 測試及門外 `python tools/test.py` 通過。七組 Chrome 測試通過：test_setup_page、test_setup_tabs、test_setup_resilience、test_relay_settings、test_nfc_settings、test_ota_page、test_password_and_confirmation。檢查手機、桌面及橫向版面，更新 README 展示截圖，資料均為本機示範值。
+- 一般韌體編譯：1,727,280 bytes 程式空間、65,768 bytes 靜態 RAM，應用程式映像 1,727,424 bytes。完整 NFC 測試配置：1,790,732 bytes 程式空間、65,800 bytes 靜態 RAM，映像 1,790,880 bytes。兩者均小於 1,966,080-byte OTA 槽；分割區、完整映像 SHA-256、ESP image digest 與 production/test 標記校驗通過。兩份實際映像再通過正式串流驗證器：一般映像接受，公開測試映像拒絕。
+- 83 個 third_party 檔案校驗一致，沒有修改 SDK 或上游原始碼。未燒錄、連線裝置、配置真實雙板金鑰、修改實機 NVS 或觸發繼電器。實際 AP／HomeKit／NFC、OTA 重啟／回滾與斷電測試仍待實機完成。
+
+
 ## 2026-11-17 相依原始碼獨立存放
 
 - 已取出必要元件至根目錄 `third_party/`，移除 `projects/outdoor-reader/HomeKey-ESP32` 工作目錄、gitlink 及 `.gitmodules`。DigitalDoorKey 只保留 HomeKey 實作與遞迴引用的標頭；PN532 與 logging 元件保留執行期原始碼、標頭及元件建置設定。

@@ -181,7 +181,7 @@ void legacy_settings() {
   CHECK(nvsRecord == legacy);  // Loading does not write or risk credentials.
   restored.relayPulseMs = 650; CHECK(upgrade.save(restored));
   SettingsStore reboot; CHECK(reboot.load(restored) == SettingsStore::Load::Loaded);
-  CHECK(restored.relayPulseMs == 650); CHECK(nvsRecord.size() == 191); CHECK(nvsRecord[2] == 3);
+  CHECK(restored.relayPulseMs == 650); CHECK(nvsRecord.size() == 192); CHECK(nvsRecord[2] == 4);
   for (size_t i = 0; i < legacy.size(); ++i) {
     nvsRecord = legacy; nvsRecord[i] ^= 1;
     SettingsStore bad; CHECK(bad.load(restored) == SettingsStore::Load::Error);
@@ -203,8 +203,24 @@ void version2_settings() {
   CHECK(settings.relayPulseMs == 650); CHECK(settings.nfcMaxFailures == 5); CHECK(settings.nfcLockoutSeconds == 60);
   CHECK(nvsRecord == before);
 }
+void version3_settings_and_password_mode() {
+  resetNvs(); SettingsStore store; auto settings = valid();
+  CHECK(store.load(settings) == SettingsStore::Load::Missing);
+  settings.passwordRequired = true; CHECK(store.save(settings));
+  SettingsStore check; door::DeviceSettings loaded;
+  CHECK(check.load(loaded) == SettingsStore::Load::Loaded); CHECK(loaded.passwordRequired);
+  nvsRecord.resize(191); nvsRecord[2] = 3;
+  uint32_t crc = 0xffffffffu;
+  for (size_t i = 0; i < 187; ++i) {
+    crc ^= nvsRecord[i];
+    for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320u : 0u);
+  }
+  crc = ~crc; for (int i = 0; i < 4; ++i) nvsRecord[187+i] = uint8_t(crc >> (8*i));
+  const auto before = nvsRecord; SettingsStore legacy;
+  CHECK(legacy.load(loaded) == SettingsStore::Load::Loaded); CHECK(!loaded.passwordRequired); CHECK(nvsRecord == before);
+}
 int main() {
   setup_window_and_recovery(); first_boot_and_rollover(); infrared_and_user_activity_windows();
-  settings_validation(); settings_storage(); legacy_settings(); version2_settings();
+  version3_settings_and_password_mode(); settings_validation(); settings_storage(); legacy_settings(); version2_settings();
   std::cout << "PASS: setup window, persistent offline AP recovery, Wi-Fi validation and actual settings NVS adapter.\n";
 }

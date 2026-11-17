@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WebServer.h>
+#include "BoundedWebServer.h"
 #include <DNSServer.h>
 #include <esp_system.h>
 #include "SettingsStore.h"
@@ -10,6 +10,7 @@
 #include "Infrared.h"
 #include "TimedRelay.h"
 #include "EspFirmwareSink.h"
+#include "FirmwareBoot.h"
 #include <functional>
 
 class SetupPortal {
@@ -30,8 +31,8 @@ class SetupPortal {
     policy_.begin(bootAt, settings_.ssid[0] != 0);
     WiFi.persistent(false);
     WiFi.setAutoReconnect(false);
-    const char* headers[] = {"Origin", "X-Setup-Token", "X-OTA-Password", "Content-Type"};
-    server_.collectHeaders(headers, 4);
+    const char* headers[] = {"Origin", "X-Setup-Token", "X-Setup-Password", "X-OTA-Password", "Content-Type"};
+    server_.collectHeaders(headers, 5);
     server_.on("/", HTTP_GET, [this]() {
       if (authorize()) server_.send_P(200, "text/html; charset=utf-8", kSetupPage);
     });
@@ -107,6 +108,7 @@ class SetupPortal {
   }
   bool restarting() const { return restarting_; }
   bool updating() const { return firmware_.active(); }
+  void firmwareHealth(const FirmwareBoot& boot) { boot_ = &boot; }
   void beforeFirmwareUpdate(std::function<void()> callback) { beforeFirmware_ = std::move(callback); }
   void nfcStatus(bool configured, bool provisioned, bool connected) {
     nfcConfigured_ = configured; nfcProvisioned_ = provisioned; nfcConnected_ = connected;
@@ -229,13 +231,7 @@ class SetupPortal {
       else message(403, "Use the device IP address or its local hostname.");
       return false;
     }
-    // Web login temporarily disabled at the owner's request. Keep for restoration.
-    /*
-    if (!server_.authenticate("admin", settings_.setupPassword)) {
-      server_.requestAuthentication(DIGEST_AUTH, "DoorReleaseSetup", "Sign in with username admin and the setup password.");
-      return false;
-    }
-    */
+    // Browsing remains available; the persisted mode controls mutation authority.
     if (restarting_) { message(503, "Device is restarting."); return false; }
     if (updating() && !firmware) { message(409, "Firmware update is in progress."); return false; }
     if (mutation) {
@@ -244,6 +240,9 @@ class SetupPortal {
           (origin.length() && origin != String("http://") + server_.hostHeader())) {
         message(403, "Setup token or request origin is invalid. Reload this page.");
         return false;
+      }
+      if (!firmware && server_.uri() != "/api/activity" && !passwordMatches(server_.header("X-Setup-Password"))) {
+        message(403, "Incorrect current setup password."); return false;
       }
       if (!firmware && server_.clientContentLength() > 1024) {
         message(413, "Settings request is too large."); return false;
@@ -257,16 +256,19 @@ class SetupPortal {
   }
   bool authorizeFirmware() {
     if (!authorize(true, true)) return false;
-    const String password = server_.header("X-OTA-Password");
-    const size_t expected = strlen(settings_.setupPassword);
-    uint8_t difference = password.length() == expected ? 0 : 1;
-    for (size_t i = 0; i < expected; ++i)
-      difference |= uint8_t(settings_.setupPassword[i]) ^ (i < password.length() ? uint8_t(password[i]) : 0);
-    if (difference) { message(403, "Incorrect setup password."); return false; }
+    if (!passwordMatches(server_.header("X-OTA-Password"))) { message(403, "Incorrect current setup password."); return false; }
     if (server_.header("Content-Type") != "application/octet-stream") {
       message(415, "Send one application .bin as application/octet-stream."); return false;
     }
     return true;
+  }
+  bool passwordMatches(const String& password) const {
+    if (!settings_.passwordRequired) return true;
+    const size_t expected = strlen(settings_.setupPassword);
+    uint8_t difference = password.length() == expected ? 0 : 1;
+    for (size_t i = 0; i < expected; ++i)
+      difference |= uint8_t(settings_.setupPassword[i]) ^ (i < password.length() ? uint8_t(password[i]) : 0);
+    return !difference;
   }
   void receiveFirmware() {
     // WebServer uses the same callback for multipart and raw streams. Never
@@ -305,7 +307,9 @@ class SetupPortal {
       message(400, firmware_.error() ? firmware_.error() : "Firmware update failed."); return;
     }
     restarting_ = true; restartAt_ = millis();
-    message(200, "Firmware installed. Restarting now.");
+    const String json = String("{\"message\":\"Firmware verified. Restarting to confirm the update.\",\"firmware_sha256\":") +
+                        quoted(firmwareSink_.imageSha256()) + "}";
+    server_.send(202, "application/json", json);
   }
   static String quoted(const String& value) {
     String result = "\"";
@@ -390,6 +394,10 @@ class SetupPortal {
     json += ",\"pairing_code\":" + quoted(settings_.pairingCode);
     json += ",\"relay_pulse_ms\":" + String(settings_.relayPulseMs);
     json += ",\"firmware_version\":" + quoted(door::kFirmwareVersion);
+    json += ",\"boot_id\":" + quoted(token_);
+    json += ",\"firmware_sha256\":" + quoted(boot_ ? boot_->imageSha256() : "");
+    json += String(",\"firmware_healthy\":") + (boot_ && boot_->healthy() ? "true" : "false");
+    json += String(",\"password_required\":") + (settings_.passwordRequired ? "true" : "false");
     json += ",\"ota_max_bytes\":" + String(firmware_.capacity());
     json += String(",\"ota_supported\":") + (firmware_.capacity() ? "true" : "false");
     json += String(",\"firmware_test_build\":") + (door::firmwareTestBuild() ? "true" : "false");
@@ -447,6 +455,11 @@ class SetupPortal {
       message(400, "Settings contain an invalid null byte."); return;
     }
     door::DeviceSettings candidate = settings_;
+    if (server_.hasArg("password_required")) {
+      const String required = server_.arg("password_required");
+      if (required != "0" && required != "1") { message(400, "Invalid password mode."); return; }
+      candidate.passwordRequired = required == "1";
+    }
     const char* error = door::updateSettings(candidate, ssid.c_str(), wifiPassword.c_str(),
                                             server_.arg("open_network") == "1", setupPassword.c_str());
     if (error) { message(400, error); return; }
@@ -487,7 +500,8 @@ class SetupPortal {
   door::Controller& controller_;
   TimedRelay& relay_;
   door::NfcAttemptLimiter& nfcAttempts_;
-  WebServer server_{80};
+  BoundedWebServer server_{80};
+  const FirmwareBoot* boot_ = nullptr;
   EspFirmwareSink firmwareSink_;
   door::FirmwareUpdate firmware_{firmwareSink_};
   std::function<void()> beforeFirmware_;

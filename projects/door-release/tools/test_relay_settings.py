@@ -81,7 +81,7 @@ def main():
             page.locator("#unsaved-save").click()
             qa.wait_js(page, "document.querySelector('#window').textContent === 'Restarting'")
             assert posts()[-1] == {"ssid": ["Home Network"], "wifi_password": [""],
-                                   "setup_password": [""], "relay_pulse_ms": ["375"],
+                                   "setup_password": [""], "password_required": ["0"], "relay_pulse_ms": ["375"],
                                    "nfc_max_failures": ["5"], "nfc_lockout_seconds": ["60"]}
             assert len(posts()) == 2
             assert page.locator("#save-other").is_disabled()

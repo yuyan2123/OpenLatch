@@ -45,6 +45,17 @@ def main():
     result = subprocess.run([str(nfc_exe)], cwd=ROOT)
     if result.returncode:
         return result.returncode
+    for name, extra in (("http_tests", []), ("nfc_manager_tests", ["-DDOOR_NATIVE_NFC_TEST=1", "-I", str(ROOT / "tests/nfc_fakes")])):
+        if name == "nfc_manager_tests" and os.name != "nt":
+            extra += ["-pthread"]
+        output = build / (name + (".exe" if os.name == "nt" else ""))
+        subprocess.run(compiler() + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-Wno-mismatched-tags", "-O1"] + extra +
+                       ["-I", str(ROOT / "tests/fakes"), "-I", str(ROOT.parent / "outdoor-reader/include"),
+                        "-I", str(ROOT.parents[1] / "third_party/DigitalDoorKey/include"),
+                        str(ROOT / "tests" / (name + ".cpp")), "-o", str(output)], cwd=ROOT, check=True)
+        result = subprocess.run([str(output)], cwd=ROOT)
+        if result.returncode:
+            return result.returncode
     ota_exe = build / ("ota_tests.exe" if os.name == "nt" else "ota_tests")
     subprocess.run(compiler() + ["-std=c++17", "-Wall", "-Wextra", "-Werror", "-O1",
                    "-I", str(ROOT / "tests/fakes"), str(ROOT / "tests/ota_tests.cpp"), "-o", str(ota_exe)], cwd=ROOT, check=True)

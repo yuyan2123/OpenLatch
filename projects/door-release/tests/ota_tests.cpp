@@ -54,10 +54,11 @@ void rejected_images_and_limits() {
 }
 void failures_abort_and_timeout() {
   const auto bytes = image();
-  for (int mode = 0; mode < 6; ++mode) {
+  for (int mode = 0; mode < 7; ++mode) {
     resetOta(); EspFirmwareSink sink; door::FirmwareUpdate update(sink);
     CHECK(update.start(0, bytes.size()));
     otaBeginFails = mode == 0; otaWriteFails = mode == 1; otaEndFails = mode == 2; otaSelectFails = mode == 3;
+    otaHashFails = mode == 6;
     update.write(0, bytes.data(), mode == 4 ? bytes.size() - 1 : bytes.size());
     if (mode == 5) update.cancel();
     CHECK(!update.finish(1)); CHECK(!otaSelections); CHECK(!update.active());

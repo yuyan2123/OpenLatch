@@ -1,9 +1,9 @@
 # Phone setup: Wi-Fi and infrared
 
-Current source: **1.3.0-ota** (not uploaded in this change).
+Current source: **1.4.0-verified-ota** (not uploaded in this change).
 The latest recorded device upload is **1.2.3-web-recovery**. The English
 page supports up to 16 door buttons and 16 setup-access buttons and a ten-minute idle
-window. Digest login is temporarily commented out at the owner's request.
+window. Browsing does not require login; password protection for changes is optional.
 IR/HomeKit relay time is now configurable from **1–800 ms**, with a **200 ms**
 default. GPIO initialization and the 2 second cooldown remain unchanged.
 For the last uploaded version, upload hashes, boot hardware/storage status and the served
@@ -33,20 +33,19 @@ extend an active pulse. Saving does not trigger the relay.
 The duration is stored in NVS and survives power loss. Version 1 settings load
 with 200 ms while preserving Wi-Fi credentials, the hotspot password and the
 HomeKit pairing code. The two IR lists and HomeSpan pairings are unchanged.
-Saving upgrades the settings record to version 2 with CRC and readback checks.
+Saving upgrades the settings record to version 4 with CRC and readback checks. Versions 1–3 retain their existing values and load with password protection disabled; loading alone does not write NVS.
 Older HTTP clients may omit `relay_pulse_ms` to retain the current duration.
 
 ## First setup
 
 1. Power on the controller. With no saved Wi-Fi credentials, it immediately
    creates **DoorRelease-XXXXXX**. Join that AP with password **DoorSetup-2026**.
-2. Open **http://192.168.4.1/** in a regular browser. Web login is temporarily
-   disabled; the hotspot still requires its password. Use a regular browser
+2. Open **http://192.168.4.1/** in a regular browser. Browsing does not require login; the hotspot still requires its password. Use a regular browser
    if the automatic captive-portal popup does not work.
 3. Enter the **2.4 GHz** network name and password. Optionally choose a private
    **New hotspot password** under **Setup hotspot password** (12 to 63 printable
    ASCII characters). It becomes the AP password after restart; a blank keeps
-   the existing password. If Digest login is restored, it uses this same value.
+   the existing password. This is also the current password used when management protection is enabled.
 4. Select **Save and restart**. Settings are validated, written to NVS and read
    back before reporting success. The relay stops and requests are inhibited
    while waiting for restart. The page clears password inputs and disables
@@ -72,6 +71,32 @@ The initial password above applies unless the firmware was built with a private
 `DOOR_SETUP_PASSWORD` override. Restarting reopens setup access but does not reset
 the saved password. Keep the new password; a forgotten password requires an
 onsite firmware/storage recovery. USB IR diagnostics do not reveal it.
+
+## Password protection
+
+Management changes and OTA are password-free by default. Enable **Require a
+password for changes and firmware updates** and save to require the current
+setup password. The hotspot remains password-protected in both modes.
+
+When protection is enabled, enter **Current setup password** above the tabs
+before saving Wi-Fi/relay/NFC settings or changing IR buttons. Changing the
+hotspot password or disabling protection also requires the old password;
+a new password cannot authorize its own change. OTA has its own current-password
+field. A blank new hotspot password keeps the existing password. Passwords are
+not stored in browser persistent storage or returned by the API. Read-only status
+and activity renewal grant no management authority.
+
+## HTTP request limits
+
+The incremental HTTP ingress checks framing and size before Arduino argument
+parsing. Headers are limited to 2,048 bytes (24 fields; 512 bytes per header
+line), and ordinary form bodies to 1,024 bytes. Each header/form phase has a
+5-second absolute and 2-second idle deadline. OTA alone may stream up to the
+app slot capacity, with 15-second idle and 180-second body deadlines.
+Each poll reads at most 512 incoming bytes and returns while waiting for data.
+Ambiguous lengths, duplicate headers, chunked bodies, unsupported methods and
+oversized requests are rejected. Connections close after one request. Parser
+errors and disconnects abort an incomplete OTA write without selecting it.
 
 ## Availability and recovery
 
@@ -155,12 +180,12 @@ available for diagnosis. A failed save leaves the current runtime unchanged;
 an unverified write may still have reached flash, so retry before restarting.
 
 NVS is not encrypted by this application. Use this HTTP setup website only on
-the protected AP or a trusted LAN. Digest authentication is currently commented
-out in `SetupPortal::authorize()` for later restoration. During an open window,
-the page and status need no login. Mutations and activity renewal still require
+the protected AP or a trusted LAN. During an open window, the page and status
+need no login. Stored password mode controls management changes. Mutations and activity renewal still require
 a per-boot random token and same-origin checks. Host checks reject unrelated domains. There is no HTTP door
-release API. The firmware upload route additionally requires the setup password
-and streams into the inactive OTA app slot. See [OTA updates](ota_setup.md) for
+release API. When protection is enabled, settings and IR changes require
+`X-Setup-Password`, and firmware upload requires `X-OTA-Password`; both validate
+the current stored password. Firmware streams into the inactive OTA app slot. See [OTA updates](ota_setup.md) for
 the required first USB installation and subsequent browser updates.
 
 ## HomeKit port and discovery
@@ -195,5 +220,11 @@ and preservation of edits across an expired/reopened window.
 
 Real AP association, DHCP, captive-portal behavior, mDNS, iPhone/HomePod pairing
 and coexistence with physical IR pulses still need isolated hardware tests.
-The built-in synchronous WebServer can briefly delay polling while serving
-requests; the independent relay timer still enforces its shutoff deadline.
+The incremental ingress returns while waiting for incoming data; response
+writes and flash operations can still briefly delay polling. The independent
+relay timer retains its software shutoff deadline.
+
+`python tools/test_password_and_confirmation.py` covers both password modes,
+old-password changes, delayed boot health, mismatched images, confirmation
+timeout, no upload replay and mobile/landscape layout. Native tests also drive
+the production bounded ingress and NFC manager/services through host adapters.

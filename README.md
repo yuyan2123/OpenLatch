@@ -6,7 +6,7 @@
 
 OpenLatch 以 ESP32-C3 驅動繼電器，輸出短暫的開門脈衝。用手機瀏覽器即可設定 Wi-Fi、學習遙控器按鍵與更新韌體；Apple Home Key 則透過門外的 ESP-32S＋PN532 轉送感應交握，由門內控制器驗證憑證。
 
-目前原始碼為 **`1.3.0-ota`**，最近一次實機燒錄紀錄為 **`1.2.3-web-recovery`**。**Home Key 雙板整合與網頁 OTA 尚待實機驗證**，進度見下方[目前狀態](#目前狀態)。
+目前原始碼為 **`1.4.0-verified-ota`**，最近一次實機燒錄紀錄為 **`1.2.3-web-recovery`**。**Home Key 雙板整合與網頁 OTA 尚待實機驗證**，進度見下方[目前狀態](#目前狀態)。
 
 <p align="center">
   <a href="docs/screenshots/setup-wifi.png"><img src="docs/screenshots/setup-wifi.png" width="32%" alt="手機設定頁：Wi-Fi 連線與設定熱點密碼" /></a>
@@ -23,7 +23,7 @@ OpenLatch 以 ESP32-C3 驅動繼電器，輸出短暫的開門脈衝。用手機
 - **手機設定。** 首次啟動提供設定熱點；平時可用設定專用 IR 按鍵重新開放網頁。Wi-Fi 連不上時自動開啟熱點供修復。
 - **可調開門時間。** 脈衝可設為 1–800 ms，預設 200 ms；各來源共用 2 秒冷卻與 3 秒啟動保護，忙碌時不延長、不排隊。
 - **Home Key 整合。** 已實作門內憑證佈建、獨立驗證與 NFC 錯誤限制，預設連續失敗 5 次後暫停 60 秒；未配置雙板通訊金鑰時保持停用。
-- **網頁 OTA。** 門內控制器可上傳應用程式 `.bin`，完整驗證後切換分割區並重啟。舊版首次啟用須先透過 USB 安裝雙 OTA 分割區。
+- **網頁 OTA。** 門內控制器可上傳應用程式 `.bin`，完整驗證後切換分割區並重啟，確認新映像與開機健康後才顯示完成。舊版首次啟用須先透過 USB 安裝雙 OTA 分割區。
 
 ## 運作方式
 
@@ -100,13 +100,13 @@ python tools/test.py
 3. 手機切回同一 Wi-Fi，開啟 **`http://door-release-xxxxxx.local/`**，或路由器顯示的裝置 IP；網址尾碼與熱點相同，字母改小寫。
 4. 在 **Infrared** 學習開門與設定按鍵；在 **Other settings** 查看 HomeKit 配對碼，加入 Apple 家庭。
 
-一般設定窗口為 10 分鐘，使用網頁會重新計時；離線熱點持續開放至 Wi-Fi 連線成功。目前設定網頁免登入，熱點仍需密碼，OTA 另需輸入設定熱點密碼。完整操作與連線復原方式見[網頁設定](projects/door-release/docs/web_setup.md)。
+一般設定窗口為 10 分鐘，使用網頁會重新計時；離線熱點持續開放至 Wi-Fi 連線成功。預設免密碼修改設定與 OTA；啟用 **Require a password for changes and firmware updates** 後，修改設定、密碼模式與 OTA 均須目前的設定密碼。設定熱點一律需要密碼。完整操作與連線復原方式見[網頁設定](projects/door-release/docs/web_setup.md)。
 
 ## 目前狀態
 
 | 項目 | 進度 |
 | --- | --- |
-| 門內原始碼 | `1.3.0-ota`；本機測試、設定頁瀏覽器檢查及韌體編譯已通過 |
+| 門內原始碼 | `1.4.0-verified-ota`；本機測試、設定頁瀏覽器檢查及韌體編譯已通過 |
 | 最近實機紀錄 | `1.2.3-web-recovery`；已燒錄並完成當次區網設定頁抽測 |
 | Home Key | 門內外程式已整合並通過本機測試與建置；待實際 MAC／金鑰配置、Apple 家庭佈建與 iPhone／Watch 雙板驗證 |
 | OTA | 已通過本機串流驗證、介面檢查與映像建置；待實機 USB 遷移、Wi-Fi 更新與開機驗證 |

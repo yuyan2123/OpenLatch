@@ -5,6 +5,6 @@
 #define DOOR_WIFI_PASSWORD ""
 // Leave empty to generate and persist a pairing code on first boot.
 #define DOOR_PAIRING_CODE ""
-// Initial AP password and web login password (username: admin).
+// Initial AP password, also used by optional management/OTA protection.
 // Change it from the setup page. Never commit private factory overrides.
 #define DOOR_SETUP_PASSWORD "DoorSetup-2026"

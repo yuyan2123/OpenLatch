@@ -1,44 +1,4 @@
-#include <cstdlib>
-#include <iostream>
-#include "../firmware/DoorRelease/SetupPortal.h"
-#define CHECK(x) do { if (!(x)) { std::cerr << __func__ << ':' << __LINE__ << " failed: " #x "\n"; std::exit(1); } } while (0)
-struct MemoryIr : door::IrStorage {
-  door::IrKeys keys{};
-  bool failSave = false;
-  door::IrLoad load(door::IrKeys& out) override { out = keys; return keys.count() ? door::IrLoad::Loaded : door::IrLoad::Empty; }
-  bool save(const door::IrKeys& input) override { if (failSave) return false; keys = input; return true; }
-};
-struct Fixture {
-  door::DeviceSettings settings{};
-  SettingsStore store;
-  MemoryIr irStore, setupIrStore;
-  door::Infrared ir{irStore};
-  door::Infrared setupIr{setupIrStore};
-  TimedRelay relay;
-  door::Controller controller{relay};
-  door::NfcAttemptLimiter nfcAttempts;
-  SetupPortal portal{settings, store, ir, setupIr, controller, relay, nfcAttempts};
-  Fixture(bool credentials = false) {
-    fakeMillis = 0; WiFi = {};
-    resetOta();
-    nvsRecord.clear(); nvsPending.clear(); nvsWrites = 0;
-    nvsOpenFails = nvsReadFails = nvsWriteFails = nvsCommitFails = nvsCorruptReadback = false;
-    std::strcpy(settings.pairingCode, "59263814"); std::strcpy(settings.setupPassword, door::kDefaultSetupPassword);
-    if (credentials) { std::strcpy(settings.ssid, "Home"); std::strcpy(settings.wifiPassword, "secretpass"); }
-    CHECK(store.load(settings) == SettingsStore::Load::Missing); CHECK(store.save(settings));
-    CHECK(relay.begin()); controller.boot(0); CHECK(ir.begin(0)); CHECK(setupIr.begin(0));
-    nfcAttempts.begin();
-    portal.begin(0, true, true);
-  }
-  void token() {
-    fakeWeb->request("/api/status"); CHECK(fakeWeb->code == 200);
-    const std::string prefix = "\"token\":\"";
-    const size_t start = fakeWeb->body.find(prefix) + prefix.size();
-    CHECK(start >= prefix.size());
-    fakeWeb->inputHeaders["X-Setup-Token"] = fakeWeb->body.substr(start, 32);
-    fakeWeb->inputHeaders["Origin"] = "http://" + fakeWeb->host;
-  }
-};
+#include "PortalFixture.h"
 void authentication_and_request_guards() {
   Fixture f; CHECK(WiFi.ap); CHECK(fakeWeb->active); CHECK(fakeWeb->port == 80);
   CHECK(WiFi.apPassword == door::kDefaultSetupPassword);
@@ -300,7 +260,7 @@ std::vector<uint8_t> firmwareImage() {
   bytes.insert(bytes.end(), std::begin(door::kFirmwareTag), std::end(door::kFirmwareTag)); return bytes;
 }
 void ota_route_guards() {
-  Fixture f;
+  Fixture f; f.settings.passwordRequired = true;
   fakeWeb->inputHeaders["Content-Type"] = "application/octet-stream";
   fakeWeb->startRaw("/api/firmware", 1024); CHECK(fakeWeb->code == 403); CHECK(!otaBegins); CHECK(!f.portal.updating());
   f.token();
@@ -337,7 +297,7 @@ void ota_success_stops_all_release_sources() {
   CHECK(f.controller.infrared(fakeMillis, true) == door::Result::Inhibited);
   CHECK(f.controller.nfc(fakeMillis, true) == door::Result::Inhibited);
   fakeWeb->writeRaw("/api/firmware", bytes.data(), bytes.size()); CHECK(!otaSelections);
-  fakeWeb->finishRaw("/api/firmware"); CHECK(fakeWeb->code == 200); CHECK(f.portal.restarting());
+  fakeWeb->finishRaw("/api/firmware"); CHECK(fakeWeb->code == 202); CHECK(f.portal.restarting());
   CHECK(otaSelections == 1); CHECK(otaBytes == bytes); CHECK(nvsRecord == settingsBefore);
   CHECK(!f.portal.restartDue(3999)); CHECK(f.portal.restartDue(4000)); CHECK(!fakeGpio);
 }
@@ -354,9 +314,32 @@ void ota_abort_and_verification_failure() {
   otaEndFails = false;
   fakeWeb->startRaw("/api/firmware", int(bytes.size()));
   fakeWeb->writeRaw("/api/firmware", bytes.data(), bytes.size());
-  fakeWeb->finishRaw("/api/firmware"); CHECK(fakeWeb->code == 200); CHECK(otaSelections == 1);
+  fakeWeb->finishRaw("/api/firmware"); CHECK(fakeWeb->code == 202); CHECK(otaSelections == 1);
+}
+void password_modes_and_old_password() {
+  Fixture f; f.token();
+  fakeWeb->request("/api/status"); CHECK(fakeWeb->body.find("\"password_required\":false") != std::string::npos);
+  fakeWeb->inputHeaders["Content-Type"] = "application/octet-stream";
+  fakeWeb->inputHeaders.erase("X-OTA-Password");
+  fakeWeb->startRaw("/api/firmware", 512); CHECK(f.portal.updating());
+  fakeWeb->finishRaw("/api/firmware", true);
+  f.settings.passwordRequired = true; CHECK(f.store.save(f.settings));
+  fakeWeb->arguments = {{"ssid", ""}, {"wifi_password", ""}, {"setup_password", "ReplacementPassword"}, {"password_required", "0"}};
+  const auto before = nvsRecord;
+  fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 403); CHECK(nvsRecord == before); CHECK(!f.portal.restarting());
+  fakeWeb->inputHeaders["X-Setup-Password"] = "ReplacementPassword";
+  fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 403); CHECK(nvsRecord == before);
+  fakeWeb->request("/api/ir/learn", HTTP_POST); CHECK(fakeWeb->code == 403); CHECK(!f.ir.learning());
+  fakeWeb->request("/api/activity", HTTP_POST); CHECK(fakeWeb->code == 200);
+  fakeWeb->startRaw("/api/firmware", 512); CHECK(fakeWeb->code == 403); CHECK(!f.portal.updating());
+  fakeWeb->inputHeaders["X-Setup-Password"] = door::kDefaultSetupPassword;
+  fakeWeb->request("/api/settings", HTTP_POST); CHECK(fakeWeb->code == 200);
+  SettingsStore reboot; door::DeviceSettings saved;
+  CHECK(reboot.load(saved) == SettingsStore::Load::Loaded);
+  CHECK(!saved.passwordRequired); CHECK(std::string(saved.setupPassword) == "ReplacementPassword");
 }
 int main() {
+  password_modes_and_old_password();
   authentication_and_request_guards(); browser_learning_and_forget();
   expiry_and_late_offline_recovery(); save_validation_and_restart(); relay_time_validation(); nfc_limits_validation_and_status();
   setup_button_learning_and_reopening(); activity_and_status_polling();

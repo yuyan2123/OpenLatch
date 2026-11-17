@@ -165,7 +165,7 @@ def main():
             qa.wait_js(page, "document.querySelector('#window').textContent === 'Restarting'")
             selected(page, "infrared")
             assert len(settings_posts()) == 2
-            assert settings_posts()[-1] == {"ssid": ["Keyboard draft"], "wifi_password": [""], "setup_password": [""], "relay_pulse_ms": ["200"], "nfc_max_failures": ["5"], "nfc_lockout_seconds": ["60"]}
+            assert settings_posts()[-1] == {"ssid": ["Keyboard draft"], "wifi_password": [""], "setup_password": [""], "relay_pulse_ms": ["200"], "nfc_max_failures": ["5"], "nfc_lockout_seconds": ["60"], "password_required": ["0"]}
             assert page.evaluate("!unsavedSettings()")
             page.locator("#tab-wifi").click()
             selected(page, "wifi")

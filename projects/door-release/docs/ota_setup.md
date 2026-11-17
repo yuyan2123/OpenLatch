@@ -1,6 +1,6 @@
 # OTA updates
 
-Starting with **1.3.0-ota**, the indoor ESP32-C3 can receive a local firmware
+Current source **1.4.0-verified-ota** extends the original `1.3.0-ota` update flow: the indoor ESP32-C3 can receive a local firmware
 update from **Other settings / Firmware update**. The outdoor ESP-32S firmware
 is still installed over USB.
 
@@ -37,14 +37,18 @@ credentials. The build command itself never uploads or discovers ports.
 1. Open setup access using the boot window or a saved setup IR button.
 2. Open **Other settings / Firmware update** and check the installed version.
 3. Select **build/esp32c3/DoorRelease.ino.bin** from a production build.
-4. Enter the **setup hotspot password** and select **Update and restart**.
-5. Wait for upload and verification to complete. Reopen the page after reboot
-   to check the new version. A network error does not automatically replay an upload.
+4. In password-free management mode, select **Update and restart** directly.
+   If password protection is enabled, enter the **current setup hotspot password**.
+5. Wait for upload, verification, restart and the new boot health check. Only
+   **Update complete** confirms completion. Upload progress or HTTP acceptance
+   alone does not indicate success. A network error never automatically replays an upload.
 
 Save or discard other settings edits before updating. Button learning must be
 finished or cancelled. Ordinary page access remains without login; firmware
-installation additionally requires the current setup password, per-boot token,
-same-origin request and an open setup window. Use the protected hotspot or LAN.
+installation requires a per-boot token, same-origin request and an open setup
+window. The current password is additionally required when password protection
+is enabled. In that mode changing the password or disabling protection also
+requires the old password; the new value cannot authorize the request. Use the protected hotspot or LAN.
 
 Door release pauses before writing. HomeKit connections are closed, infrared
 capture is stopped, and pending NFC results are invalidated. After a failed
@@ -63,20 +67,33 @@ are rejected. Compatibility tags identify builds; they are not digital signature
 
 Only a fully received and verified image is selected for next boot. Interrupted
 or rejected uploads retain the current boot selection. Idle timeout is 15 seconds
-and total upload time is limited to 180 seconds. The standard Arduino bootloader
-does not provide automatic rollback if a newly installed image boots and then
-malfunctions; USB recovery remains available. The dual-slot behavior follows
+and total body time is limited to 180 seconds. The new application overrides
+Arduino's early automatic OTA confirmation: relay/controller, settings, IR
+storage and expected NFC initialization must remain healthy for 3 seconds
+before it confirms the pending image. Failed checks for 30 seconds request
+rollback. A loop watchdog is enabled while a boot is pending, so a stalled
+loop can reset into the bootloader's rollback path. This uses the pinned
+Arduino build's rollback-enabled bootloader; physical boot behavior still
+requires validation. USB recovery remains available. The dual-slot behavior follows
 [Espressif's OTA model](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32c3/api-reference/system/ota.html).
 
 Build verification checks the actual partition layout, full image SHA-256,
 production/test tag and size, then writes **build/esp32c3/firmware.json** with
-version, size and SHA-256. Test artifacts are kept in **build/esp32c3-nfc-test**.
+version, size, full-file `sha256` and the appended ESP image `image_sha256`. Test artifacts are kept in **build/esp32c3-nfc-test**.
 
 ## HTTP API
 
 `POST /api/firmware` accepts one raw app image with `Content-Type:
 application/octet-stream`, a fixed `Content-Length`, `X-Setup-Token` and
-`X-OTA-Password`. The browser sets the body length from the selected file.
+`X-OTA-Password` only when protection is enabled. The browser sets the body
+length from the selected file. A verified upload returns **202** with
+`firmware_sha256`; this means accepted for reboot, not update complete.
+`GET /api/status` exposes `boot_id`, `firmware_sha256` (the verified appended
+ESP image digest) and `firmware_healthy`. The page compares the returned digest
+with the uploaded file trailer and waits for a different boot ID with that
+same digest and healthy state. A different image or 90-second confirmation
+timeout produces an unconfirmed result, never a success message. Older images
+without the health/status protocol cannot be automatically confirmed.
 Settings mutations retain their 1024-byte limit; this route alone uses the OTA
 slot's capacity. There is no firmware download URL, background updater or door
 release action attached to this route.

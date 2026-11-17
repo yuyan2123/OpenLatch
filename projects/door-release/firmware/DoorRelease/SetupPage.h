@@ -88,6 +88,7 @@ details{margin-top:var(--space-lg);border-top:1px solid var(--color-rule);paddin
 summary{cursor:pointer;min-height:44px;align-content:center;font-size:var(--text-sm);font-weight:500}summary:active{color:var(--color-accent-deep)}
 .warning{color:var(--color-muted);font-size:var(--text-sm);margin-top:var(--space-sm)}
 .auth-note{margin-top:var(--space-lg);font-size:var(--text-sm);color:var(--color-muted)}
+.authorization{max-width:640px;margin-bottom:var(--space-xl)}
 .remote-controls{min-width:0}.remote{padding-block:var(--space-lg);border-bottom:1px solid var(--color-rule)}
 .remote:first-of-type{padding-top:var(--space-lg)}
 .remote p.description{color:var(--color-muted);font-size:var(--text-sm);margin-top:var(--space-xs)}
@@ -135,6 +136,7 @@ dialog::backdrop{background:color-mix(in srgb,var(--color-ink) 25%,transparent)}
   <div class="connection"><span id="network" role="status">Reading connection status…</span><span id="address"></span></div>
   <div class="window"><span>Setup time left</span><strong id="window" role="timer">Connecting…</strong></div>
 </div>
+<div id="setup-authorization" class="authorization" hidden><label for="current-password">Current setup password</label><input id="current-password" type="password" minlength="12" maxlength="63" autocomplete="current-password" aria-describedby="current-password-hint"><small id="current-password-hint">Required to change settings and remote buttons.</small></div>
 <div id="notice" class="notice" role="status" aria-live="polite" hidden><p id="notice-text"></p><button id="retry" class="secondary" type="button" hidden>Retry</button></div>
 <noscript><p class="notice">Enable JavaScript to configure this device. Everything works on your local network.</p></noscript>
 <div class="workspace">
@@ -145,6 +147,7 @@ dialog::backdrop{background:color-mix(in srgb,var(--color-ink) 25%,transparent)}
     <div class="field"><label for="ssid">Network name</label><input id="ssid" name="ssid" maxlength="32" autocomplete="off" spellcheck="false" aria-describedby="ssid-hint" disabled><small id="ssid-hint">Leave empty to use the setup hotspot only.</small></div>
     <div class="field"><label for="wifi-password">Wi-Fi password</label><input id="wifi-password" name="wifi_password" type="password" maxlength="64" autocomplete="new-password" aria-describedby="wifi-hint" disabled><small id="wifi-hint">Leave empty to keep the password for the same network.</small><label class="check"><input id="open-network" type="checkbox" name="open_network" value="1" disabled>This network has no password</label></div>
     <details><summary>Setup hotspot password</summary><div class="field"><label for="setup-password">New hotspot password</label><input id="setup-password" name="setup_password" type="password" minlength="12" maxlength="63" autocomplete="new-password" aria-describedby="setup-hint" disabled><small id="setup-hint">Optional. 12 to 63 printable characters. Leave empty to keep it.</small></div><p id="default-password" class="warning" hidden>The initial hotspot password is still in use.</p></details>
+    <label class="check"><input id="password-required" type="checkbox" name="password_required" value="1" disabled>Require a password for changes and firmware updates</label>
     <button id="save" class="save" type="submit" disabled>Save and restart</button><small id="save-hint">Changes take effect after restart.</small>
   </form>
 </section>
@@ -191,13 +194,13 @@ dialog::backdrop{background:color-mix(in srgb,var(--color-ink) 25%,transparent)}
   <h2 id="firmware-heading">Firmware update</h2><p id="firmware-version" class="section-intro">Reading version…</p>
   <form id="firmware-form">
     <div class="field"><label for="firmware-file">Firmware (.bin)</label><input id="firmware-file" type="file" accept=".bin,application/octet-stream" required aria-describedby="firmware-hint" disabled><small id="firmware-hint">Choose DoorRelease.ino.bin.</small></div>
-    <div class="field"><label for="firmware-password">Setup password</label><input id="firmware-password" type="password" minlength="12" maxlength="63" autocomplete="current-password" required aria-describedby="firmware-password-hint" disabled><small id="firmware-password-hint">Same as the setup hotspot.</small></div>
+    <div id="firmware-password-field" class="field" hidden><label for="firmware-password">Setup password</label><input id="firmware-password" type="password" minlength="12" maxlength="63" autocomplete="current-password" required aria-describedby="firmware-password-hint" disabled><small id="firmware-password-hint">Same as the setup hotspot.</small></div>
     <button id="firmware-upload" class="save" type="submit" disabled>Update and restart</button>
   </form>
   <progress id="firmware-progress" value="0" max="100" aria-label="Firmware upload" hidden></progress>
   <p id="firmware-status" class="ir-message" role="status" aria-live="polite"></p>
 </section>
-<p class="auth-note">Web login is temporarily disabled. The setup hotspot still requires its password.</p>
+<p class="auth-note">The setup hotspot always requires its password.</p>
 </div>
 </div>
 <footer><p id="access-note">Setup opens for 10 minutes after boot or a setup button press. Using this page resets the timer. Background updates do not.</p><p>Offline hotspot setup stays available until Wi-Fi connects.</p><p id="hostname"></p></footer>
@@ -216,7 +219,7 @@ let requestTail=Promise.resolve(),countdownUntil=0;
 let currentPage="wifi",pendingPage=null,savedSettings=null;
 let firmwareNotice=false;
 const pageNames=["wifi","infrared","rfid","other"],unsavedDialog=byId("unsaved-dialog");
-function settingsValues(){return [byId("ssid").value,byId("wifi-password").value,byId("open-network").checked,byId("setup-password").value,byId("relay-pulse").value,byId("nfc-max-failures").value,byId("nfc-lockout-seconds").value]}
+function settingsValues(){return [byId("ssid").value,byId("wifi-password").value,byId("open-network").checked,byId("setup-password").value,byId("relay-pulse").value,byId("nfc-max-failures").value,byId("nfc-lockout-seconds").value,byId("password-required").checked]}
 function unsavedSettings(){return savedSettings!==null&&JSON.stringify(settingsValues())!==JSON.stringify(savedSettings)}
 function selectPage(name){
   currentPage=name;
@@ -246,7 +249,7 @@ document.querySelector('[role="tablist"]').addEventListener("keydown",event=>{
 byId("unsaved-cancel").addEventListener("click",()=>unsavedDialog.close("cancel"));
 byId("unsaved-discard").addEventListener("click",()=>{
   const target=pendingPage;
-  [byId("ssid").value,byId("wifi-password").value,byId("open-network").checked,byId("setup-password").value,byId("relay-pulse").value,byId("nfc-max-failures").value,byId("nfc-lockout-seconds").value]=savedSettings;
+  [byId("ssid").value,byId("wifi-password").value,byId("open-network").checked,byId("setup-password").value,byId("relay-pulse").value,byId("nfc-max-failures").value,byId("nfc-lockout-seconds").value,byId("password-required").checked]=savedSettings;
   unsavedDialog.close("discard");controls();selectPage(target);
 });
 byId("unsaved-save").addEventListener("click",async()=>{
@@ -260,13 +263,14 @@ function controls(){
   const editable=initialized&&!busy&&!stopped,ready=editable&&!connectionFailed,learning=Boolean(lastState&&(lastState.ir_learning||lastState.setup_ir_learning));
   document.querySelectorAll("#settings-form input").forEach(element=>element.disabled=!editable);
   byId("relay-pulse").disabled=!editable;
+  byId("current-password").disabled=!editable;byId("password-required").disabled=!editable;
   byId("nfc-max-failures").disabled=!editable;byId("nfc-lockout-seconds").disabled=!editable;
   byId("wifi-password").disabled=!editable||byId("open-network").checked;
   byId("save").disabled=!ready||learning;byId("save-hint").textContent=learning?"Finish or cancel button learning before saving.":"Changes take effect after restart.";
   byId("save-other").disabled=byId("save").disabled;
   byId("save-rfid").disabled=byId("save").disabled;
   const otaReady=ready&&Boolean(lastState&&lastState.ota_supported);
-  byId("firmware-file").disabled=!otaReady;byId("firmware-password").disabled=!otaReady;
+  byId("firmware-file").disabled=!otaReady;byId("firmware-password").disabled=!otaReady||!lastState?.password_required;
   byId("firmware-upload").disabled=!otaReady||learning;
   byId("learn").disabled=!ready||learning||!lastState||!lastState.hardware_ready||!lastState.ir_ready||lastState.ir_count>=lastState.ir_capacity;
   byId("cancel").disabled=!ready||!lastState||!lastState.ir_learning;
@@ -302,10 +306,10 @@ function disconnected(error){
 }
 function reportError(error){if(error.status===410)return;if(!error.status)disconnected(error);else notice(error.message,true)}
 function request(path,body){
-  const setupToken=token;
+  const setupToken=token,currentPassword=byId("current-password").value;
   const task=requestTail.then(async()=>{
     const options={cache:"no-store",credentials:"same-origin",signal:AbortSignal.timeout(12000)};
-    if(body!==undefined){options.method="POST";options.headers={"X-Setup-Token":setupToken,"Content-Type":"application/x-www-form-urlencoded"};options.body=body}
+    if(body!==undefined){options.method="POST";options.headers={"X-Setup-Token":setupToken,"Content-Type":"application/x-www-form-urlencoded"};options.body=body;if(lastState?.password_required&&path!=="/api/activity")options.headers["X-Setup-Password"]=currentPassword}
     const response=await fetch(path,options);let data;
     try{data=await response.json()}catch{throw new Error("The device response was interrupted. Reconnecting automatically.")}
     if(response.status===410)closePage(data.message);
@@ -343,8 +347,10 @@ function render(state){
   const renewed=stopped||token!==state.token;
   if(connectionNotice||stopped)notice("");
   stopped=false;connectionFailed=false;failures=0;
-  lastState=state;token=state.token;if(!initialized){byId("ssid").value=state.ssid;byId("relay-pulse").value=state.relay_pulse_ms??200;byId("nfc-max-failures").value=state.nfc_max_failures??5;byId("nfc-lockout-seconds").value=state.nfc_lockout_seconds??60;savedSettings=settingsValues();initialized=true}
+  lastState=state;token=state.token;if(!initialized){byId("ssid").value=state.ssid;byId("password-required").checked=Boolean(state.password_required);byId("relay-pulse").value=state.relay_pulse_ms??200;byId("nfc-max-failures").value=state.nfc_max_failures??5;byId("nfc-lockout-seconds").value=state.nfc_lockout_seconds??60;savedSettings=settingsValues();initialized=true}
   byId("door-timing").textContent="Saved buttons work offline. A press gives a "+(state.relay_pulse_ms??200)+" ms pulse with a 2 second cooldown.";
+  byId("setup-authorization").hidden=!state.password_required;
+  byId("firmware-password-field").hidden=!state.password_required;byId("firmware-password").required=Boolean(state.password_required);
   byId("firmware-version").textContent=state.firmware_version||"Unknown version";
   byId("firmware-hint").textContent="Choose DoorRelease.ino.bin."+(state.ota_max_bytes?" Up to "+(state.ota_max_bytes/1048576).toFixed(2)+" MB.":"");
   if(!firmwareNotice)firmwareMessage(state.ota_supported?"Door release pauses during the update.":"Install the OTA firmware over USB first.",false,false);
@@ -398,9 +404,9 @@ async function saveSettings(){
   if(byId("save").disabled)return false;
   const invalid=[...byId("settings-form").elements].find(element=>element.willValidate&&!element.validity.valid);
   if(invalid){selectPage(invalid.closest('[role="tabpanel"]').id.slice(5));invalid.reportValidity();return false}
-  const body=new URLSearchParams(new FormData(byId("settings-form")));body.set("wifi_password",byId("open-network").checked?"":byId("wifi-password").value);
+  const body=new URLSearchParams(new FormData(byId("settings-form")));body.set("password_required",byId("password-required").checked?"1":"0");body.set("wifi_password",byId("open-network").checked?"":byId("wifi-password").value);
   busy=true;byId("save").setAttribute("aria-busy","true");controls();notice("Saving settings…");
-  try{const data=await request("/api/settings",body.toString());restarting=true;stopped=true;clearTimeout(refreshTimer);clearTimeout(activityTimer);byId("wifi-password").value="";byId("setup-password").value="";savedSettings=settingsValues();notice(data.message+" Use http://"+lastState.hostname+"/ after reconnecting, or http://192.168.4.1/ on the setup hotspot.");byId("window").textContent="Restarting";return true}
+  try{const data=await request("/api/settings",body.toString());restarting=true;stopped=true;clearTimeout(refreshTimer);clearTimeout(activityTimer);byId("wifi-password").value="";byId("setup-password").value="";byId("current-password").value="";savedSettings=settingsValues();notice(data.message+" Use http://"+lastState.hostname+"/ after reconnecting, or http://192.168.4.1/ on the setup hotspot.");byId("window").textContent="Restarting";return true}
   catch(error){reportError(error);return false}finally{busy=false;byId("save").removeAttribute("aria-busy");controls();if(!restarting)scheduleRefresh(1000)}
 }
 // Validate after revealing the owning tab so hidden fields can receive focus.
@@ -411,8 +417,8 @@ byId("firmware-file").addEventListener("change",()=>{firmwareNotice=false;byId("
 function sendFirmware(file,password){
   const task=requestTail.then(()=>new Promise((resolve,reject)=>{
     const upload=new XMLHttpRequest();upload.open("POST","/api/firmware");upload.timeout=180000;
-    upload.setRequestHeader("Content-Type","application/octet-stream");upload.setRequestHeader("X-Setup-Token",token);upload.setRequestHeader("X-OTA-Password",password);
-    upload.upload.addEventListener("progress",event=>{if(event.lengthComputable){byId("firmware-progress").value=Math.round(event.loaded/event.total*100);if(event.loaded===event.total)firmwareMessage("Verifying firmware…")}});
+    upload.setRequestHeader("Content-Type","application/octet-stream");upload.setRequestHeader("X-Setup-Token",token);if(lastState?.password_required)upload.setRequestHeader("X-OTA-Password",password);
+    upload.upload.addEventListener("progress",event=>{if(event.lengthComputable){byId("firmware-progress").value=Math.min(95,Math.round(event.loaded/event.total*95));if(event.loaded===event.total)firmwareMessage("Verifying firmware…")}});
     upload.addEventListener("load",()=>{
       let data;try{data=JSON.parse(upload.responseText)}catch{reject(new Error("Update response was interrupted. Check the device version before trying again."));return}
       if(upload.status===410)closePage(data.message);
@@ -423,6 +429,20 @@ function sendFirmware(file,password){
     upload.send(file);
   }));
   requestTail=task.catch(()=>{});return task;
+}
+async function confirmFirmware(expected,previousBoot){
+  if(!/^[0-9a-f]{64}$/.test(expected||""))throw new Error("Update response has no image identity. Check the running firmware before trying again.");
+  const deadline=Date.now()+90000;
+  while(Date.now()<deadline){
+    await new Promise(resolve=>setTimeout(resolve,1000));
+    let state;try{state=await request("/api/status")}catch{continue}
+    if(!state.boot_id||state.boot_id===previousBoot)continue;
+    if(state.firmware_healthy){
+      if(state.firmware_sha256===expected)return state;
+      throw new Error("A different firmware image is running. The update was not confirmed.");
+    }
+  }
+  throw new Error("Update could not be confirmed. Reconnect and check the device version before trying again.");
 }
 byId("firmware-form").addEventListener("submit",async event=>{
   event.preventDefault();if(byId("firmware-upload").disabled||!byId("firmware-form").reportValidity())return;
@@ -435,11 +455,20 @@ byId("firmware-form").addEventListener("submit",async event=>{
     if(header[0]!==0xe9||!header[1]||header[1]>16||header[12]!==5||header[13]!==0||header[23]!==1||header[32]!==0x32||header[33]!==0x54||header[34]!==0xcd||header[35]!==0xab)throw new Error("Choose an ESP32-C3 application .bin, not a merged image or bootloader.");
     const password=byId("firmware-password").value;byId("firmware-password").value="";
     byId("firmware-progress").value=0;byId("firmware-progress").hidden=false;firmwareMessage("Uploading firmware…");
+    const expectedHash=[...new Uint8Array(await file.slice(-32).arrayBuffer())].map(byte=>byte.toString(16).padStart(2,"0")).join("");
+    const previousBoot=lastState.boot_id;
     const data=await sendFirmware(file,password);
-    restarting=true;stopped=true;clearTimeout(refreshTimer);clearTimeout(activityTimer);byId("firmware-file").value="";
-    byId("window").textContent="Restarting";byId("firmware-progress").value=100;firmwareMessage(data.message+" Reopen this page to check the version.");
-  }catch(error){firmwareMessage(error.message,true);if(error.status===410)closePage(error.message)}
+    if(data.firmware_sha256!==expectedHash)throw new Error("The device reported a different image. Check the running firmware before trying again.");
+    restarting=true;stopped=true;clearTimeout(refreshTimer);clearTimeout(activityTimer);
+    byId("window").textContent="Restarting";byId("firmware-progress").removeAttribute("value");
+    firmwareMessage("Firmware verified. Restarting and checking the new firmware…");
+    const state=await confirmFirmware(data.firmware_sha256,previousBoot);
+    restarting=false;stopped=false;initialized=false;byId("firmware-form").reset();byId("current-password").value="";
+    render(state);byId("firmware-progress").value=100;
+    firmwareMessage("Update complete. Running "+state.firmware_version+".");
+  }catch(error){restarting=false;firmwareMessage(error.message,true);if(error.status===410)closePage(error.message)}
   finally{busy=false;byId("firmware-password").value="";byId("firmware-upload").removeAttribute("aria-busy");controls();if(!restarting)scheduleRefresh(1000)}
+
 });
 async function buttonAction(button,path,body=""){
   busy=true;button.setAttribute("aria-busy","true");controls();

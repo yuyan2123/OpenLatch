@@ -15,6 +15,7 @@ struct DeviceSettings {
   uint32_t relayPulseMs = kPulseMs;
   uint32_t nfcMaxFailures = kNfcMaxFailures;
   uint32_t nfcLockoutSeconds = kNfcLockoutSeconds;
+  bool passwordRequired = false;
 };
 inline bool validPairingCode(const char* code) {
   if (std::strlen(code) != 8) return false;

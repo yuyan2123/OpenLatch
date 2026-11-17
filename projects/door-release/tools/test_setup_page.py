@@ -35,10 +35,14 @@ IO_LOCK = threading.Lock()
 OTA_REQUESTS = []
 OTA_FAILURE = False
 OTA_DELAY = 0
+OTA_BOOT_AT = OTA_HEALTH_AT = 0
+OTA_SHA256 = ""
+OTA_BOOT_MATCH = OTA_REBOOT = OTA_HEALTHY = True
+OTA_AUTH_HEADERS = []
 
 
 def reset():
-    global SAVE_FAILURE, EXPIRED, DEADLINE, STATUS_DELAY, MAX_IN_FLIGHT, OTA_FAILURE, OTA_DELAY
+    global SAVE_FAILURE, EXPIRED, DEADLINE, STATUS_DELAY, MAX_IN_FLIGHT, OTA_FAILURE, OTA_DELAY, OTA_BOOT_AT, OTA_HEALTH_AT, OTA_SHA256, OTA_BOOT_MATCH, OTA_REBOOT, OTA_HEALTHY
     STATE.clear()
     STATE.update(token="1234567890abcdef1234567890abcdef", ssid="Home Network",
                  connected=True, ap=False, ap_name="DoorRelease-AABBCC", ip="192.168.1.42",
@@ -46,7 +50,7 @@ def reset():
                  pairing_code="59263814", relay_pulse_ms=200, default_password=True, settings_ready=True,
                  nfc_max_failures=5, nfc_lockout_seconds=60, nfc_failures=0, nfc_lockout_remaining_ms=0,
                  nfc_configured=False, nfc_provisioned=False, nfc_connected=False,
-                 firmware_version="1.3.0-ota", ota_supported=True, ota_max_bytes=1966080, firmware_test_build=False,
+                 firmware_version="1.4.0-verified-ota", password_required=False, boot_id="before-update", firmware_sha256="b"*64, firmware_healthy=True, ota_supported=True, ota_max_bytes=1966080, firmware_test_build=False,
                  hardware_ready=True, ir_ready=True, ir_learning=False, ir_enabled=False,
                  ir_protocol="none", ir_address=0, ir_command=0,
                  ir_event="Ready. Start learning to register an unlock button.",
@@ -56,7 +60,8 @@ def reset():
                  ir_count=0, ir_capacity=16, ir_buttons=[],
                  setup_ir_count=0, setup_ir_capacity=16, setup_ir_buttons=[])
     REQUESTS.clear()
-    OTA_REQUESTS.clear(); OTA_FAILURE = False; OTA_DELAY = 0
+    OTA_REQUESTS.clear(); OTA_AUTH_HEADERS.clear(); OTA_FAILURE = False; OTA_DELAY = 0
+    OTA_BOOT_AT = OTA_HEALTH_AT = 0; OTA_SHA256 = ""; OTA_BOOT_MATCH = OTA_REBOOT = OTA_HEALTHY = True
     SAVE_FAILURE = EXPIRED = False
     DEADLINE = time.monotonic() + 580
     STATUS_FAULTS.clear()
@@ -115,6 +120,9 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/tokens.css":
             self.reply(200, (ROOT / "firmware/DoorRelease/web/tokens.css").read_bytes(), "text/css")
         elif self.path == "/api/status":
+            if OTA_REBOOT and OTA_BOOT_AT and time.monotonic() >= OTA_BOOT_AT:
+                STATE.update(boot_id="after-update", token="abcdef1234567890abcdef1234567890", firmware_sha256=OTA_SHA256 if OTA_BOOT_MATCH else "c"*64,
+                             firmware_healthy=OTA_HEALTHY and time.monotonic() >= OTA_HEALTH_AT)
             if STATUS_DELAY:
                 time.sleep(STATUS_DELAY)
             fault = STATUS_FAULTS.pop(0) if STATUS_FAULTS else None
@@ -139,6 +147,7 @@ class Handler(BaseHTTPRequestHandler):
             self.handle_post()
 
     def handle_post(self):
+        global OTA_BOOT_AT, OTA_HEALTH_AT, OTA_SHA256
         if EXPIRED:
             self.reply(410, {"message": "Setup window closed. Press the learned setup button or restart, then reload."})
             return
@@ -148,13 +157,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/firmware":
             REQUESTS.append((self.path, {"size": [str(len(payload))]}))
-            if self.headers.get("X-OTA-Password") != "DoorSetup-2026":
-                self.reply(403, {"message": "Incorrect setup password."}); return
+            if STATE.get("password_required") and self.headers.get("X-OTA-Password") != "DoorSetup-2026":
+                self.reply(403, {"message": "Incorrect current setup password."}); return
             OTA_REQUESTS.append(payload)
+            OTA_AUTH_HEADERS.append(self.headers.get("X-OTA-Password"))
             if OTA_DELAY:
                 time.sleep(OTA_DELAY)
-            self.reply(400 if OTA_FAILURE else 200, {"message": "Firmware verification failed." if OTA_FAILURE else "Firmware installed. Restarting now."})
+            if OTA_FAILURE:
+                self.reply(400, {"message": "Firmware verification failed."})
+            else:
+                OTA_SHA256 = payload[-32:].hex()
+                OTA_BOOT_AT = time.monotonic() + 0.7; OTA_HEALTH_AT = time.monotonic() + 2
+                self.reply(202, {"message": "Firmware verified. Restarting to confirm the update.", "firmware_sha256": OTA_SHA256})
             return
+        if STATE.get("password_required") and self.path != "/api/activity" and self.headers.get("X-Setup-Password") != "DoorSetup-2026":
+            self.reply(403, {"message": "Incorrect current setup password."}); return
         body = payload.decode()
         arguments = parse_qs(body, keep_blank_values=True)
         REQUESTS.append((self.path, arguments))
@@ -338,7 +355,7 @@ def main():
             assert page.locator("#setup-password").input_value() == ""
             saved = [data for path, data in REQUESTS if path == "/api/settings"][-1]
             assert saved == {"ssid": ["Edited network"], "wifi_password": ["password123"],
-                             "setup_password": ["PrivateSetupPassword"], "relay_pulse_ms": ["200"],
+                             "setup_password": ["PrivateSetupPassword"], "password_required": ["0"], "relay_pulse_ms": ["200"],
                              "nfc_max_failures": ["5"], "nfc_lockout_seconds": ["60"]}
             reset()
             page.reload()

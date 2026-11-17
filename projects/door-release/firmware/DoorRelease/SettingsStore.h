@@ -16,7 +16,8 @@ class SettingsStore {
     if (result == ESP_ERR_NVS_NOT_FOUND) return Load::Missing;
     const bool legacy = length == kLegacySize && record[2] == 1;
     const bool version2 = length == kVersion2Size && record[2] == 2;
-    if (result != ESP_OK || (!legacy && !version2 && (length != kSize || record[2] != 3)) ||
+    const bool version3 = length == kVersion3Size && record[2] == 3;
+    if (result != ESP_OK || (!legacy && !version2 && !version3 && (length != kSize || record[2] != 4)) ||
         record[0] != 'D' || record[1] != 'S' || record[3] != 0) return Load::Error;
     const uint32_t crc = checksum(record, length - 4);
     for (int i = 0; i < 4; ++i)
@@ -37,6 +38,10 @@ class SettingsStore {
         candidate.nfcLockoutSeconds |= uint32_t(record[183 + i]) << (8 * i);
       }
     }
+    if (!legacy && !version2 && !version3) {
+      if (record[187] > 1) return Load::Error;
+      candidate.passwordRequired = record[187] != 0;
+    }
     if (!door::validSettings(candidate)) return Load::Error;
     settings = candidate;
     return Load::Loaded;
@@ -44,7 +49,7 @@ class SettingsStore {
   bool save(const door::DeviceSettings& settings) {
     if (!opened_ || !door::validSettings(settings)) return false;
     uint8_t record[kSize]{};
-    record[0] = 'D'; record[1] = 'S'; record[2] = 3;
+    record[0] = 'D'; record[1] = 'S'; record[2] = 4;
     std::memcpy(record + 4, settings.ssid, 33);
     std::memcpy(record + 37, settings.wifiPassword, 65);
     std::memcpy(record + 102, settings.pairingCode, 9);
@@ -54,6 +59,7 @@ class SettingsStore {
       record[179 + i] = uint8_t(settings.nfcMaxFailures >> (8 * i));
       record[183 + i] = uint8_t(settings.nfcLockoutSeconds >> (8 * i));
     }
+    record[187] = settings.passwordRequired ? 1 : 0;
     const uint32_t crc = checksum(record, kSize - 4);
     for (int i = 0; i < 4; ++i) record[kSize - 4 + i] = uint8_t(crc >> (8 * i));
     if (nvs_set_blob(handle_, "settings", record, kSize) != ESP_OK || nvs_commit(handle_) != ESP_OK)
@@ -68,7 +74,8 @@ class SettingsStore {
   // Explicit wire layout avoids compiler padding and preserves v1 credentials.
   static constexpr size_t kLegacySize = 4 + 171 + 4;
   static constexpr size_t kVersion2Size = kLegacySize + 4;
-  static constexpr size_t kSize = kVersion2Size + 8;
+  static constexpr size_t kVersion3Size = kVersion2Size + 8;
+  static constexpr size_t kSize = kVersion3Size + 1;
   static uint32_t checksum(const uint8_t* data, size_t size) {
     uint32_t crc = 0xffffffffu;
     for (size_t i = 0; i < size; ++i) {

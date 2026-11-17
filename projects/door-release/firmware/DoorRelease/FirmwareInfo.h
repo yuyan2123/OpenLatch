@@ -3,7 +3,7 @@
 #include <cstdint>
 
 namespace door {
-inline constexpr char kFirmwareVersion[] = "1.3.0-ota";
+inline constexpr char kFirmwareVersion[] = "1.4.0-verified-ota";
 inline constexpr char kFirmwarePrefix[] = "OpenLatch/DoorRelease/ESP32-C3/OTA1:";
 inline constexpr uint8_t kFirmwareSuffix[]{1, 0xa7, 0x4c, 0x42, 0xb9, 0x67};
 #ifdef DOOR_TEST_NFC_BUILD

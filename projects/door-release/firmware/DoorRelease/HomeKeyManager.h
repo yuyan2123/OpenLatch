@@ -17,7 +17,12 @@
 #include "NfcAttemptLimiter.h"
 #include "ddk/homekey/ProfileFactory.h"
 #include "ddk/transport/NfcChannel.h"
-#if __has_include("nfc_peer.h")
+#if defined(DOOR_NATIVE_NFC_TEST)
+#ifdef ARDUINO
+#error "Native NFC adapters cannot be built for a device"
+#endif
+#include <TestNfcPeer.h>
+#elif __has_include("nfc_peer.h")
 #include "nfc_peer.h"
 #else
 #include "nfc_peer.example.h"
@@ -48,13 +53,14 @@ class HomeKeyManager {
   bool configured() const { return configured_; }
   bool provisioned() const { return provisioned_; }
   bool connected() const { return connected_; }
+  bool healthy() const { return store_.healthy() && (!credentials::provisioned || configured_); }
   // Main loop consumes each result once. Queued results expire, and any pause
   // or credential edit invalidates results produced before that change.
   bool takeVerified(uint32_t now) {
     Verified result{};
     return verified_ && xQueueReceive(verified_, &result, 0) == pdTRUE && enabled_ &&
            result.admission == admission_ && result.generation == store_.generation() && store_.healthy() &&
-           uint32_t(now - result.at) < 250 && connected_;
+           uint32_t(now - result.at) < 250 && connected_ && WiFi.status() == WL_CONNECTED;
   }
  private:
   struct Received { uint16_t length; std::array<uint8_t, outdoor::kMaxWireSize> bytes; };
@@ -155,34 +161,40 @@ class HomeKeyManager {
     }
     session_.release(millis());
   }
+ public:
+  // Called only by the NFC task. One iteration is also driven by host adapter tests.
+  uint32_t poll() {
+    if (WiFi.status() != WL_CONNECTED) { session_.reset(); connected_ = false; return 50; }
+    if (!radio_) {
+      radio_ = radioBegin();
+      if (!radio_) { configured_ = false; return 0; }
+    }
+    {
+      std::unique_lock<std::mutex> lock(store_.mutex, std::try_to_lock);
+      if (!lock) return 5;
+      provisioned_ = store_.provisioned();
+      if (!provisioned_) { session_.reset(); connected_ = false; }
+      else if (store_.generation() != generation_) {
+        const auto& id = store_.reader_identity().group_identifier;
+        std::array<uint8_t,8> group{}; std::copy(id.begin(), id.end(), group.begin());
+        if (group != group_) { session_.reset(); group_ = group; }
+        generation_ = store_.generation();
+      }
+    }
+    if (!provisioned_) return 50;
+    pump();
+    // A Tag may arrive before an outstanding Ping ACK. Keep it pending until
+    // that request completes; consuming it early would discard a valid tap.
+    if (!session_.waiting() && session_.takeTag(millis())) {
+      if (enabled_) authenticate(); else session_.release(millis());
+    } else if (uint32_t(millis() - pingAt_) >= 1000 && session_.ping(millis())) pingAt_ = millis();
+    return 5;
+  }
+ private:
   static void workerEntry(void* object) { static_cast<HomeKeyManager*>(object)->worker(); }
   void worker() {
-    bool radio = false;
-    uint32_t pingAt = millis(), generation = std::numeric_limits<uint32_t>::max();
-    while (true) {
-      if (WiFi.status() != WL_CONNECTED) { session_.reset(); connected_ = false; vTaskDelay(pdMS_TO_TICKS(50)); continue; }
-      if (!radio) { radio = radioBegin(); if (!radio) { configured_ = false; vTaskDelete(nullptr); return; } }
-      {
-        std::unique_lock<std::mutex> lock(store_.mutex, std::try_to_lock);
-        if (!lock) { vTaskDelay(pdMS_TO_TICKS(5)); continue; }
-        provisioned_ = store_.provisioned();
-        if (!provisioned_) { session_.reset(); connected_ = false; }
-        else if (store_.generation() != generation) {
-          const auto& id = store_.reader_identity().group_identifier;
-          std::array<uint8_t,8> group{}; std::copy(id.begin(), id.end(), group.begin());
-          if (group != group_) { session_.reset(); group_ = group; }
-          generation = store_.generation();
-        }
-      }
-      // Let HAP provisioning acquire the store while no identity is available.
-      // Never sleep holding the credential mutex.
-      if (!provisioned_) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }
-      pump();
-      if (session_.takeTag(millis())) {
-        if (enabled_) authenticate(); else session_.release(millis());
-      } else if (uint32_t(millis() - pingAt) >= 1000 && session_.ping(millis())) pingAt = millis();
-      vTaskDelay(pdMS_TO_TICKS(5));
-    }
+    while (const uint32_t delayMs = poll()) vTaskDelay(pdMS_TO_TICKS(delayMs));
+    vTaskDelete(nullptr);
   }
   inline static HomeKeyManager* instance_ = nullptr;
   HomeKeyStore& store_; door::NfcAttemptLimiter& attempts_;
@@ -193,5 +205,6 @@ class HomeKeyManager {
   std::atomic<bool> enabled_{false}, configured_{false}, provisioned_{false}, connected_{false};
   std::atomic<uint32_t> admission_{0};
   uint32_t attemptAdmission_ = 0;
-  bool transportError_ = false;
+  bool transportError_ = false, radio_ = false;
+  uint32_t pingAt_ = 0, generation_ = std::numeric_limits<uint32_t>::max();
 };

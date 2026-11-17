@@ -14,6 +14,7 @@
 #include "HomeKeyManager.h"
 #include "HomeKeyServices.h"
 #include <HAP.h>
+#include "FirmwareBoot.h"
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
@@ -42,6 +43,10 @@ bool homekitStarted = false;
 bool settingsReady = false;
 bool verifiedSession = false;  // Only changed on HomeSpan's polling task.
 bool firmwarePaused = false;
+FirmwareBoot firmwareBoot;
+bool firmwareWatchdog = false;
+// Override Arduino's weak hook; confirmation belongs to our application checks.
+extern "C" bool verifyRollbackLater() { return true; }
 
 bool initializeSettings() {
   const auto loaded = settingsStore.load(settings);
@@ -166,6 +171,9 @@ void setup() {
   // First hardware action; no USB/serial wait or network initialization first.
   bool timerReady = relay.begin();
   const uint32_t bootAt = millis();
+  firmwareBoot.begin(bootAt);
+  if (firmwareBoot.pending()) { enableLoopWDT(); firmwareWatchdog = true; }
+  setupPortal.firmwareHealth(firmwareBoot);
   controller.boot(bootAt);
   Serial.begin(115200);
   if (!timerReady) {
@@ -258,6 +266,9 @@ void loop() {
     if (hardwareReady) IrReceiver.start();
     firmwarePaused = false;
   }
+  firmwareBoot.poll(millis(), hardwareReady && settingsReady && !controller.faulted() &&
+                    infrared.ready() && setupInfrared.ready() && homeKey.healthy());
+  if (firmwareWatchdog && firmwareBoot.healthy()) { disableLoopWDT(); firmwareWatchdog = false; }
   if (setupPortal.restartDue(millis())) { relay.stop(); ESP.restart(); return; }
   if (!hardwareReady) { relay.stop(); delay(10); return; }
   syncInfrared();

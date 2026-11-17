@@ -34,7 +34,7 @@ def verify(directory, test=False):
     info = (ROOT / "firmware/DoorRelease/FirmwareInfo.h").read_text()
     version = re.search(r'kFirmwareVersion\[\] = "([^"]+)"', info).group(1)
     result = dict(project="DoorRelease", version=version, chip="esp32c3", application=image.name,
-                  size=len(data), max_size=0x1e0000, sha256=hashlib.sha256(data).hexdigest(),
+                  size=len(data), max_size=0x1e0000, sha256=hashlib.sha256(data).hexdigest(), image_sha256=data[-32:].hex(),
                   test_build=test, ota_upload_allowed=not test)
     (directory / "firmware.json").write_text(json.dumps(result, indent=2) + "\n")
     return result

@@ -2,11 +2,11 @@
 
 本專案位於 `projects/door-release/`。以下指令均從此目錄執行；若目前在 repository 根目錄，先執行 `cd projects/door-release`。其他專案見 [OpenLatch](../../README.md)。
 
-目前原始碼為 **1.3.0-ota**：**Other settings / Firmware update** 可選擇應用程式 `.bin`、輸入設定熱點密碼後更新並重啟。更新期間暫停開門，驗證完整映像後才切換至新分割區。**舊版首次啟用必須經 USB 安裝雙 OTA 分割區**；之後才可透過網頁更新。操作、首次安裝與限制見 [OTA 更新](docs/ota_setup.md)。
+目前原始碼為 **1.4.0-verified-ota**：免密碼模式下，OTA 不需密碼；啟用 **Require a password for changes and firmware updates** 後，設定修改、密碼變更／停用與 OTA 必須驗證目前的設定密碼。設定熱點仍一律使用密碼。更新會先完整驗證映像，再重啟；網頁確認新的開機識別、映像 SHA-256 與開機健康後，才顯示 **Update complete**。**舊版首次啟用必須經 USB 安裝雙 OTA 分割區**；之後才可透過網頁更新。操作、首次安裝與限制見 [OTA 更新](docs/ota_setup.md)。
 
 門內 Apple Home Key 驗證、ESP-NOW 轉送接收與 HomeKit NFC 憑證佈建保留。**RFID** 分頁可設定連續錯誤次數與暫停秒數，預設 **5 次／60 秒**；有效驗證清除連續錯誤，重送不重計，讀取／通訊／儲存故障不算憑證錯誤。未配置雙板 MAC 與通訊金鑰時，NFC 保持停用。實機配置依使用者要求留待之後，操作見 [Home Key](docs/homekey_setup.md)。
 
-**Other settings / Door release** 可自訂開門時間 **1–800 ms**，預設 **200 ms（0.2 秒）**，HomeKit、紅外線與已驗證 Home Key 共用。按 **Save and restart** 後生效，斷電仍保留。v1／v2 設定自動載入，保留 Wi-Fi、HomeKit 配對碼、IR 按鍵及已有自訂時間。GPIO4 驅動強度 3、2 秒冷卻與兩種用途各 16 組 IR 按鍵均保留。
+**Other settings / Door release** 可自訂開門時間 **1–800 ms**，預設 **200 ms（0.2 秒）**，HomeKit、紅外線與已驗證 Home Key 共用。按 **Save and restart** 後生效，斷電仍保留。v1–v3 設定自動載入，保留 Wi-Fi、HomeKit 配對碼、IR 按鍵及已有自訂時間。GPIO4 驅動強度 3、2 秒冷卻與兩種用途各 16 組 IR 按鍵均保留。
 
 最近一次實機燒錄紀錄仍為 **1.2.3-web-recovery**；本次變更尚未燒錄。紀錄見 [VALIDATION.md](VALIDATION.md)。
 
@@ -22,7 +22,7 @@ Apple Home 的「Front Door Release」保留瞬時開關，新增 Home Key 所�
 
 1. 首次燒錄後，用手機連上 **`DoorRelease-XXXXXX`**，初始 AP 密碼為 **`DoorSetup-2026`**。
 2. 瀏覽 **`http://192.168.4.1/`**；目前網頁不需帳號密碼。如果系統跳出的網路登入視窗無法操作，改用一般瀏覽器開啟此網址。
-3. 在 **Wi-Fi connection** 填入 2.4 GHz 網路名稱與密碼；可展開 **Setup hotspot password**，用 **New hotspot password** 修改 AP 密碼。按 **Save and restart** 儲存、重新啟動；重新開機不會重設密碼。原登入驗證程式保留在註解內，日後恢復時仍使用同一組設定密碼。
+3. 在 **Wi-Fi connection** 填入 2.4 GHz 網路名稱與密碼；可展開 **Setup hotspot password**，用 **New hotspot password** 修改 AP 密碼。按 **Save and restart** 儲存、重新啟動；重新開機不會重設密碼。預設管理操作免密碼；勾選 **Require a password for changes and firmware updates** 後儲存啟用。啟用時，設定頁上方的 **Current setup password** 必須填入舊密碼，才能修改設定、IR 按鍵、密碼或關閉保護；OTA 使用更新表單內的目前密碼。空白新密碼代表保留，不代表停用保護。
 4. 成功連線後，手機切回同一 Wi-Fi，開啟 **`http://door-release-xxxxxx.local/`**，或路由器顯示的裝置 IP。網址尾碼與 AP 相同，字母改小寫；存檔前網頁也會顯示此網址。
 5. 在 **Remote buttons / Open the door** 按 **Add door button**，依畫面提示分開按同一按鍵兩次，每次之間放開至少 500 ms；30 秒內完成。新增不覆蓋既有按鍵，最多 16 組；可按 **Cancel learning** 取消。清單的 **Remove** 只刪除該筆，**Clear all door buttons** 則清除全部開門按鍵。
 6. 在 **Open setup access** 按 **Add setup button**，完成相同的兩次學習；此用途也可儲存 16 組，並有逐筆移除與全部清除。設定按鍵只開放網頁，不開門；尚未設定時，先利用開機窗口進網頁學習。兩種用途不能共用同一按鍵，重複學習不多占名額。學習立即儲存，不必再按 Wi-Fi 的儲存按鈕。
@@ -92,7 +92,7 @@ quit
 
 冷卻從主迴圈**觀察到停止**開始計算，所以主迴圈延遲時只會更晚接受下一次請求。重複抑制範圍是正在動作與冷卻期間；HomeKit `On` 沒有應用層請求 ID，冷卻後的新 ON 視為新指令。
 
-控制器不提供 HTTP 解鎖 API、MQTT 或串列直接開門指令。HomeSpan 內建串列輸入、診斷與 AP 佈建入口已關閉，改由本專案的網頁處理設定；USB IR 設定與診斷保留。網頁登入依要求暫時停用；修改及活動續時仍需有效的本次啟動 token，拒絕跨來源請求，不回傳 Wi-Fi 或設定密碼。OTA 安裝另需設定熱點密碼。日誌不印 Wi-Fi、設定密碼或配對碼。所有韌體命名、註解及訊息使用英文。
+控制器不提供 HTTP 解鎖 API、MQTT 或串列直接開門指令。HomeSpan 內建串列輸入、診斷與 AP 佈建入口已關閉，改由本專案的網頁處理設定；USB IR 設定與診斷保留。瀏覽設定頁不需登入；管理操作依儲存的密碼模式驗證。修改及活動續時仍需有效的本次啟動 token，拒絕跨來源請求，不回傳 Wi-Fi 或設定密碼。活動續時不提供設定或 OTA 權限。日誌不印 Wi-Fi、設定密碼或配對碼。所有韌體命名、註解及訊息使用英文。
 
 ## 紅外線學習與開門
 
@@ -141,7 +141,10 @@ firmware/DoorRelease/
   EspFirmwareSink.h     寫入未使用分割區、驗證及開機切換
   partitions.csv        4 MB flash 的雙 OTA 分割區
   SetupPolicy.h         10 分鐘期限、重連與離線 AP 策略
-  SetupPortal.h         登入、設定網頁、DNS 與設定 API
+  SetupPortal.h         密碼模式、設定網頁、DNS 與設定 API
+  HttpRequestGuard.h    固定大小 HTTP 標頭、body 上限與讀取期限
+  BoundedWebServer.h    每次最多讀取 512 bytes 的設定頁 HTTP 入口
+  FirmwareBoot.h        新映像開機檢查與延後回滾確認
   SetupPage.h           自動產生、嵌入 flash 的網頁
   web/index.html        無外部相依的英文設定介面原始檔
   secrets.example.h     可選的出廠設定範本
@@ -166,6 +169,10 @@ powershell -ExecutionPolicy Bypass -File tools/build-firmware.ps1
 Home Key 建置使用根目錄 [third_party](../../third_party/README.md) 的 DigitalDoorKey HomeKey 原始碼，不再依賴完整上游專案。TinyCBOR 0.6.0 公開標頭仍以固定校驗碼補足 Arduino SDK 缺漏，首次下載需要網路，之後使用本機快取；不修改 SDK。Windows 編譯暫用空閒磁碟代號縮短工具鏈路徑，結束後移除。`tools/build-firmware.ps1 -TestNfc` 另建完整 NFC 測試映像，使用公開測試金鑰，只供編譯驗證。
 
 如果需要預填出廠設定，可複製 `secrets.example.h` 為同資料夾的 `secrets.h`；只在第一次沒有 NVS 設定時採用，之後以網頁儲存的設定為準。私密檔案已加入 `.gitignore`。Wi-Fi、設定密碼及配對資料會存進 NVS；這不是 flash 加密，請勿分享私有檔案、實機韌體或 flash 備份。
+
+設定紀錄 v4 保留 v1–v3 的 Wi-Fi、配對碼、熱點密碼、脈衝及 NFC 限制；舊紀錄載入為免密碼管理模式，載入本身不回寫。HTTP 標頭上限 2,048 bytes，設定 body 上限 1,024 bytes；標頭及一般 body 各有 5 秒總期限、2 秒閒置期限。OTA body 使用分割區容量上限、15 秒閒置與 180 秒總期限。等待資料時會返回主迴圈。
+
+`python tools/simulate.py test` 另包含真實 HTTP 入口與 NFC 管理／HomeKit 服務整合測試，使用本機傳輸及加密結果替身；不代表已通過真實 Apple 配對或無線驗收。
 
 網頁瀏覽器驗證可另執行 `python tools/test_setup_page.py`（需已安裝 Chrome 及 `.tools/web-qa` 下的 Playwright）。此檢查使用本機模擬 API，不連實機；結果與限制見 [VALIDATION.md](VALIDATION.md)。
 
