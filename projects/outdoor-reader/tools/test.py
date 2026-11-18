@@ -13,7 +13,7 @@ def compiler():
         if shutil.which(name):
             return [name]
     suffix = "zig.exe" if os.name == "nt" else "zig"
-    for directory in (ROOT / ".tools/python/ziglang", ROOT.parent / "door-release/.tools/python/ziglang"):
+    for directory in (ROOT / ".tools/python/ziglang", ROOT.parent / "indoor-controller/.tools/python/ziglang"):
         executable = directory / suffix
         if executable.exists():
             return [str(executable), "c++"]

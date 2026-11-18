@@ -1,6 +1,6 @@
 # 通訊規劃
 
-加密 ESP-NOW 單播的門內與門外端已實作，待實際 MAC 配置與雙板驗證。格式見 [OpenLatch NFC protocol 1](../projects/outdoor-reader/docs/protocol.md)，配置見 [Home Key](../projects/door-release/docs/homekey_setup.md)。
+加密 ESP-NOW 單播的門內與門外端已實作，待實際 MAC 配置與雙板驗證。格式見 [OpenLatch NFC protocol 1](../projects/outdoor-reader/docs/protocol.md)，配置見 [Home Key](../projects/indoor-controller/docs/homekey_setup.md)。
 
 - 門外搜尋門內的 Wi-Fi 頻道，固定配對 station MAC。
 - PMK／LMK 與獨立 HMAC-SHA256 金鑰。

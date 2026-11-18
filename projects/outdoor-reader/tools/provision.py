@@ -76,7 +76,7 @@ def main():
         parser.error(str(error))
     for path in files:
         print(f"Created {path}")
-    print("Keep both files private. Import the JSON profile with door-release/tools/import_nfc_peer.py.")
+    print("Keep both files private. Import the JSON profile with indoor-controller/tools/import_nfc_peer.py.")
 
 
 if __name__ == "__main__":

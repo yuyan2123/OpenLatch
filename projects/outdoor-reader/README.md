@@ -1,10 +1,10 @@
-# 門外 NFC 轉送器
+# OpenLatch 門外 NFC 轉送器
 
 ESP-32S／ESP32-WROOM-32、4 MB Flash，搭配 SPI 模式 PN532。門外只轉送 NFC 交握；HomeKey 驗證、憑證與開門權限屬於門內控制器。
 
 韌體使用根目錄 [third_party](../../third_party/README.md) 中的 PN532 通訊元件，獨立建置；來源版本與授權隨專案保存。
 
-門內 `door-release` 已加入 ESP-NOW 接收、DigitalDoorKey HomeKey 驗證、HomeKit NFC 憑證佈建與錯誤次數限制。**雙板 MAC 配置與真實 iPhone／Watch 驗證仍待實機完成，尚未燒錄本次整合。** 見 [門內配置](../door-release/docs/homekey_setup.md)。
+門內 `indoor-controller` 已加入 ESP-NOW 接收、DigitalDoorKey HomeKey 驗證、HomeKit NFC 憑證佈建與錯誤次數限制。**雙板 MAC 配置與真實 iPhone／Watch 驗證仍待實機完成，尚未燒錄本次整合。** 見 [門內配置](../indoor-controller/docs/homekey_setup.md)。
 
 ```text
 firmware/main/      ESP-NOW 與 PN532 韌體
@@ -44,7 +44,7 @@ python tools/test.py
 
 PlatformIO 固定 `espressif32@6.13.0`（ESP-IDF 5.5.3）；工具下載至本專案 `.tools/platformio/`。Windows 建置期間暫用一個空閒磁碟代號避免長路徑，完成後移除；不修改系統設定。建置指令不搜尋串列埠、不燒錄。輸出為 `build/pio/esp32s/firmware.bin`。
 
-本機測試需要 g++、clang++ 或 Zig，也可使用 `door-release` 已安裝的 Zig。需要時執行 `python -m pip install --target .tools/python ziglang==0.14.1`。Windows 使用 CNG HMAC；Linux 需要 OpenSSL 開發套件。
+本機測試需要 g++、clang++ 或 Zig，也可使用 `indoor-controller` 已安裝的 Zig。需要時執行 `python -m pip install --target .tools/python ziglang==0.14.1`。Windows 使用 CNG HMAC；Linux 需要 OpenSSL 開發套件。
 
 未配置時可以編譯。韌體只印出自身 **station MAC**，不啟動 NFC 轉送，供首次取得板子身分。
 
