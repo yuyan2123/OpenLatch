@@ -84,8 +84,9 @@ powershell -ExecutionPolicy Bypass -File tools/build-firmware.ps1
 門外韌體從 `projects/outdoor-reader/` 建置與測試：
 
 ```powershell
-python -m pip install --target .tools/python platformio==6.1.19
-python tools/build.py
+python -m venv .tools/build-venv
+./.tools/build-venv/Scripts/python.exe -m pip install platformio==6.1.19
+./.tools/build-venv/Scripts/python.exe tools/build.py
 python tools/test.py
 ```
 

@@ -98,5 +98,22 @@ Settings mutations retain their 1024-byte limit; this route alone uses the OTA
 slot's capacity. There is no firmware download URL, background updater or door
 release action attached to this route.
 
-Actual USB migration, interrupted power and over-the-air booting still need
-validation on the physical controller. This change has not been flashed.
+## Bench acceptance on an ESP32-C3
+
+Physical migration, interrupted uploads and boot recovery are pending. Use a
+bench controller with the relay contacts disconnected from the door. Record the
+firmware version, learned IR button list and configured pulse duration before
+the USB migration above. Check all three again after migration, allowing for the
+new firmware version.
+
+1. Record the migrated controller's boot ID and running image digest. Begin a
+   Wi-Fi upload and interrupt the connection while the body is still transferring.
+   Reconnect after the upload timeout. Check that the controller still reports the
+   original digest, can accept another update and responds to the saved IR button.
+2. Upload a compatible production build with a **different** image digest.
+   After reboot, check for a new boot ID, a healthy status and a running digest
+   equal to that build's `firmware.json` field `image_sha256`.
+3. Compare the learned buttons and pulse setting to the pre-migration record.
+   Press the saved button once and measure one contact closure of the configured
+   duration. Record the measured duration with the two image digests. Physical
+   power-loss recovery requires a separate power-interruption test.

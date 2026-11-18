@@ -54,6 +54,10 @@ void form_and_ota_through_the_actual_server_adapter() {
 }
 void interrupted_upload_aborts_the_inactive_partition() {
   Fixture f; f.token(); const std::string token = fakeWeb->inputHeaders["X-Setup-Token"];
+  const door::IrKey savedButton{door::IrProtocol::Nec, 1, 2, 32};
+  f.irStore.keys.entries[0] = savedButton;
+  CHECK(f.ir.begin(fakeMillis));
+  const auto settingsBefore = nvsRecord;
   auto socket = fakeWeb->enqueue(header("/api/firmware", 1024, "application/octet-stream", token));
   f.portal.poll(); CHECK(f.portal.updating());
   std::string prefix(288,0); prefix[0]=char(0xe9); prefix[1]=2; prefix[12]=5; prefix[23]=1;
@@ -61,6 +65,13 @@ void interrupted_upload_aborts_the_inactive_partition() {
   socket->input += prefix; f.portal.poll(); CHECK(otaBegins == 1);
   fakeMillis += 15000; f.portal.poll();
   CHECK(socket->response == 408); CHECK(!f.portal.updating()); CHECK(otaAborts == 1); CHECK(!otaSelections);
+  CHECK(!f.portal.restarting()); CHECK(nvsRecord == settingsBefore); CHECK(!fakeGpio);
+  CHECK(f.irStore.keys.entries[0] == savedButton);
+  fakeMillis += door::kIrQuietMs;
+  CHECK(f.portal.receiveIr(fakeMillis, savedButton) == door::IrEvent::Matched);
+  f.relay.permitInfrared(f.ir.enabled());
+  CHECK(f.controller.infrared(fakeMillis, true) == door::Result::Accepted);
+  CHECK(fakeGpio);
 }
 void boot_confirmation_and_failure() {
   resetOta(); otaBootState = ESP_OTA_IMG_PENDING_VERIFY;

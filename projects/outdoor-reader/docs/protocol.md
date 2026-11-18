@@ -45,7 +45,7 @@ Response code=3 表示 PN532 交換失敗，payload 為空，tap 已結束。其
 
 ## 流程與重送
 
-1. 門外每 500 ms 換頻並送 Hello。正確來源、HMAC 與 nonce 的 Configure 才能停止搜尋。
+1. 開機時門外從最小的允許頻道送 Hello。已連線的讀取器失聯時先在原頻道送 Hello，之後每 500 ms 輪巡下一個允許頻道。正確來源、HMAC 與 nonce 的 Configure 才能停止搜尋。
 2. 門內提供公開 group ID；門外產生 ECP、初始化 PN532 並回 Ack。
 3. 門內每秒送 Ping。租約 5 秒，只有新的有效請求續時，重送不續時。
 4. 偵測到卡片後送 Tag；第一個 Exchange／Release 前，每 150 ms 原樣重送。

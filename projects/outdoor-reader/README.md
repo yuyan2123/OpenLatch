@@ -36,8 +36,9 @@ SPI 訊號使用 3.3 V 邏輯。若模組只標示 5 V 電源輸入，需先確�
 以下從 `projects/outdoor-reader/` 執行。所需元件已隨 repository 放在 `third_party/`，不需要額外取得上游專案。
 
 ```powershell
-python -m pip install --target .tools/python platformio==6.1.19
-python tools/build.py
+python -m venv .tools/build-venv
+./.tools/build-venv/Scripts/python.exe -m pip install platformio==6.1.19
+./.tools/build-venv/Scripts/python.exe tools/build.py
 python tools/test.py
 ```
 
@@ -53,11 +54,15 @@ PlatformIO 固定 `espressif32@6.13.0`（ESP-IDF 5.5.3）；工具下載至本�
 
 ```powershell
 python tools/provision.py --indoor-mac AA:BB:CC:DD:EE:F0 --outdoor-mac AA:BB:CC:DD:EE:F2
-python tools/build.py --require-provisioned
+./.tools/build-venv/Scripts/python.exe tools/build.py --require-provisioned
 ```
 
 MAC 僅示範格式，必須換成實際板子。工具建立 `private/credentials.h` 與 `private/indoor-peer.json`，後者供門內實作使用。兩份都包含私密通訊金鑰，不可分享或加入 Git；已配置的韌體映像也包含這些金鑰。既有配置不會被覆寫；`--force` 才會輪替兩份金鑰。
 
 預設搜尋頻道 1～11，`--channels 1,6,11` 可縮小範圍。門內保持路由器目前的頻道，回覆門外 Hello 後開始交握。門外不需要家庭 Wi-Fi 密碼。
+
+門外讀取器失聯後會先在上次完成交握的頻道送出 Hello。等候 500 ms 後仍未連線，才繼續輪巡允許的頻道。重新上電時從編號最小的允許頻道開始。
+
+USB 序列紀錄每 10 秒列出目前頻道、連線狀態及三個自開機累計的數值。`rx_queue_full` 是接收佇列已滿而丟棄的封包數，`tx_submit_failed` 是無線驅動拒收的傳送請求數，`tx_delivery_failed` 是驅動接受請求後回報投遞失敗的次數。每次感應結束另列 `duration_ms`，從讀取器開始處理標籤算到工作迴圈觀察到交握結束，包含逾時個案。
 
 詳細格式見 [通訊協定](docs/protocol.md)，分工見 [整合計畫](docs/plan.md)，結果見 [VALIDATION.md](VALIDATION.md)。通訊金鑰只證明設備身分；門內必須獨立驗證當次 HomeKey，不能依卡號或門外自報成功開門。

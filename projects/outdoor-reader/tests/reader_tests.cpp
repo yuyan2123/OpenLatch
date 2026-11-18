@@ -1,4 +1,5 @@
 #include "Protocol.h"
+#include "ChannelScan.h"
 #include "ReaderSession.h"
 #include "Ecp.h"
 #include "PnResponse.h"
@@ -238,4 +239,20 @@ void faultsAndHardDeadline() {
   raw[1] = 0; raw[0] = 0x43; CHECK(!validPnResponse(raw, sizeof(raw), 2));
   std::cout << "PASS: lease/tap deadlines across clock wrap, removal gate, reader failures, old-epoch rejection and ECP CRC-A.\n";
 }
-int main() { cryptoAndWire(); pairingAndRetries(); faultsAndHardDeadline(); }
+void channelScanning() {
+  constexpr uint32_t start = 0xffffff00u;
+  ChannelScan scan((1u << 0) | (1u << 5) | (1u << 12));
+  CHECK(scan.probeDue(start, false) && scan.current() == 1);
+  CHECK(!scan.probeDue(start + 499, false));
+  CHECK(scan.probeDue(start + 500, false) && scan.current() == 6);
+  CHECK(!scan.probeDue(start + 501, true));
+  CHECK(scan.probeDue(start + 502, false) && scan.current() == 6);
+  CHECK(!scan.probeDue(start + 1001, false));
+  CHECK(scan.probeDue(start + 1002, false) && scan.current() == 13);
+  CHECK(scan.probeDue(start + 1502, false) && scan.current() == 1);
+  ChannelScan single(1u << 10);
+  CHECK(single.probeDue(0, false) && single.current() == 11);
+  CHECK(single.probeDue(500, false) && single.current() == 11);
+  std::cout << "PASS: preferred channel on reconnect, masked fallback, single channel and clock wrap.\n";
+}
+int main() { cryptoAndWire(); pairingAndRetries(); faultsAndHardDeadline(); channelScanning(); }

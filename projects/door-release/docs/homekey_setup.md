@@ -17,7 +17,7 @@ From `projects/outdoor-reader`, generate the paired transport profile once:
 
 ```powershell
 python tools/provision.py --indoor-mac AA:BB:CC:DD:EE:F0 --outdoor-mac AA:BB:CC:DD:EE:F2
-python tools/build.py --require-provisioned
+./.tools/build-venv/Scripts/python.exe tools/build.py --require-provisioned
 ```
 
 Replace both example addresses. From `projects/door-release`, import the matching

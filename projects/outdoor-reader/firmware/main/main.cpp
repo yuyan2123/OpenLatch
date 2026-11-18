@@ -1,4 +1,5 @@
 #include "Protocol.h"
+#include "ChannelScan.h"
 #include "ReaderSession.h"
 #include "Ecp.h"
 #include "PnReader.h"
@@ -17,6 +18,7 @@
 #include "freertos/task.h"
 #include "mbedtls/md.h"
 #include "nvs_flash.h"
+#include <atomic>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -48,7 +50,8 @@ class Hmac final : public Auth {
 struct Received { uint16_t length; uint8_t channel; std::array<uint8_t, kMaxWireSize> bytes; };
 QueueHandle_t inbox = nullptr;
 SemaphoreHandle_t sent = nullptr;
-uint8_t currentChannel = 1;
+std::atomic<unsigned> rxQueueFull{0}, txDeliveryFailed{0};
+unsigned txSubmitFailed = 0;  // Worker-owned.
 
 void receiveCallback(const esp_now_recv_info_t* info, const uint8_t* data, int length) {
   if (!inbox || !info || !info->src_addr || !info->des_addr || !info->rx_ctrl || !data ||
@@ -59,9 +62,10 @@ void receiveCallback(const esp_now_recv_info_t* info, const uint8_t* data, int l
   message.length = uint16_t(length); message.channel = info->rx_ctrl->channel;
   std::copy_n(data, size_t(length), message.bytes.begin());
   // Drop when full. No PN532 work, HMAC, allocation, or blocking in Wi-Fi callbacks.
-  (void)xQueueSend(inbox, &message, 0);
+  if (xQueueSend(inbox, &message, 0) != pdTRUE) rxQueueFull.fetch_add(1, std::memory_order_relaxed);
 }
-void sendCallback(const esp_now_send_info_t*, esp_now_send_status_t) {
+void sendCallback(const esp_now_send_info_t*, esp_now_send_status_t status) {
+  if (status != ESP_NOW_SEND_SUCCESS) txDeliveryFailed.fetch_add(1, std::memory_order_relaxed);
   if (sent) xSemaphoreGive(sent);
 }
 
@@ -72,7 +76,10 @@ class Radio final : public Output {
     if (!codec_.encode(frame, false, wire_)) return;
     // One in-flight send keeps callback ownership and packet order unambiguous.
     (void)xSemaphoreTake(sent, 0);
-    if (esp_now_send(credentials::indoorMac.data(), wire_.bytes.data(), wire_.length) != ESP_OK) return;
+    if (esp_now_send(credentials::indoorMac.data(), wire_.bytes.data(), wire_.length) != ESP_OK) {
+      ++txSubmitFailed;
+      return;
+    }
     if (xSemaphoreTake(sent, pdMS_TO_TICKS(500)) != pdTRUE) {
       // Never allow a late send callback to acknowledge a subsequent send.
       ESP_LOGE(kLog, "Radio callback timed out; restarting transport");
@@ -139,15 +146,6 @@ bool setupRadio() {
   ESP_ERROR_CHECK(esp_now_register_send_cb(sendCallback));
   return true;
 }
-void nextChannel() {
-  for (int i = 0; i < 13; ++i) {
-    currentChannel = uint8_t(currentChannel % 13 + 1);
-    if (credentials::channels & (uint16_t(1) << (currentChannel - 1))) {
-      ESP_ERROR_CHECK(esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE));
-      return;
-    }
-  }
-}
 }  // namespace
 
 extern "C" void app_main() {
@@ -166,25 +164,35 @@ extern "C" void app_main() {
   static Received message{};
   static Frame frame{};
   session.begin(nowMs());
-  uint32_t hoppedAt = nowMs() - 500, healthAt = nowMs();
+  ChannelScan scan(credentials::channels);
+  uint32_t healthAt = nowMs(), statsAt = healthAt;
+  uint32_t tapStartedAt = 0;
   std::vector<uint8_t> uid;
   std::array<uint8_t, 2> atqa{};
   uint8_t sak = 0;
   ESP_LOGI(kLog, "NFC relay ready; waiting for authenticated indoor configuration");
   while (true) {
+    const bool tapWasActive = session.active();
     session.tick(nowMs());
     // Process a bounded number of packets so traffic cannot starve timeouts.
     for (int budget = 0; budget < 4 && xQueueReceive(inbox, &message, 0) == pdTRUE; ++budget) {
-      if (message.channel == currentChannel &&
+      if (message.channel == scan.current() &&
           codec.decode(message.bytes.data(), message.length, true, frame)) session.receive(nowMs(), frame);
     }
     const uint32_t now = nowMs();
-    if (!session.bound()) {
-      if (uint32_t(now - hoppedAt) >= 500) {
-        nextChannel(); hoppedAt = now;
-        session.hello();
-      }
-    } else if (!session.active()) {
+    if (tapWasActive && !session.active()) {
+      ESP_LOGI(kLog, "Reader tap ended: duration_ms=%lu", static_cast<unsigned long>(now - tapStartedAt));
+    }
+    if (uint32_t(now - statsAt) >= 10000) {
+      statsAt = now;
+      ESP_LOGI(kLog, "ESP-NOW channel=%u bound=%d rx_queue_full=%u tx_submit_failed=%u tx_delivery_failed=%u",
+               unsigned(scan.current()), int(session.bound()), rxQueueFull.load(std::memory_order_relaxed),
+               txSubmitFailed, txDeliveryFailed.load(std::memory_order_relaxed));
+    }
+    if (scan.probeDue(now, session.bound())) {
+      ESP_ERROR_CHECK(esp_wifi_set_channel(scan.current(), WIFI_SECOND_CHAN_NONE));
+      session.hello();
+    } else if (session.bound() && !session.active()) {
       if (uint32_t(now - healthAt) >= 2000) {
         healthAt = now;
         if (!pn.healthy()) { session.begin(nowMs()); continue; }
@@ -194,7 +202,8 @@ extern "C" void app_main() {
         session.presence(nowMs(), present);
         if (present) pn.release();
       } else if (present) {
-        if (!session.detected(nowMs(), uid.data(), uid.size(), atqa, sak)) pn.release();
+        tapStartedAt = nowMs();
+        if (!session.detected(tapStartedAt, uid.data(), uid.size(), atqa, sak)) pn.release();
       }
     }
     vTaskDelay(pdMS_TO_TICKS(5));

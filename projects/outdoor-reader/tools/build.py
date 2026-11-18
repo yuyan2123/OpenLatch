@@ -44,7 +44,7 @@ def main():
     local = ROOT / ".tools/python"
     sys.path.insert(0, str(local))
     if importlib.util.find_spec("platformio") is None:
-        parser.error("Install: python -m pip install --target .tools/python platformio==6.1.19")
+        parser.error("Install platformio==6.1.19 in a virtual environment and run this script with its Python.")
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(local) + os.pathsep + environment.get("PYTHONPATH", "")
     # All build dependencies are public PyPI packages. Keep an unrelated user
