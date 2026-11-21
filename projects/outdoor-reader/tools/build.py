@@ -37,7 +37,9 @@ def tool_directory():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--require-provisioned", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--require-provisioned", action="store_true")
+    mode.add_argument("--card-test", action="store_true", help="Build the standalone PN532 LED test")
     args = parser.parse_args()
     if args.require_provisioned and not (ROOT / "private/credentials.h").exists():
         parser.error("Run tools/provision.py with the actual board MAC addresses first")
@@ -52,15 +54,20 @@ def main():
     environment["PIP_EXTRA_INDEX_URL"] = "https://pypi.org/simple"
     environment["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
     profile = ROOT / "private/credentials.h"
-    fingerprint = hashlib.sha256(profile.read_bytes() if profile.exists() else b"unconfigured").hexdigest()
+    wifi_profile = ROOT / "private/reader_wifi.h"
     state = ROOT / "build/.credentials-state"
-    if not state.exists() or state.read_text() != fingerprint:
-        # Re-evaluate __has_include and the private include directory after provisioning.
-        (ROOT / "firmware/main/CMakeLists.txt").touch()
+    if not args.card_test:
+        credentials = profile.read_bytes() if profile.exists() else b"unconfigured"
+        wifi = wifi_profile.read_bytes() if wifi_profile.exists() else b""
+        fingerprint = hashlib.sha256(credentials + b"\0" + wifi).hexdigest()
+        if not state.exists() or state.read_text() != fingerprint:
+            # Re-evaluate __has_include and the private include directory after provisioning.
+            (ROOT / "firmware/main/CMakeLists.txt").touch()
+    target = "esp32s-card-test" if args.card_test else "esp32s"
     with tool_directory() as directory:
         environment["PLATFORMIO_CORE_DIR"] = str(directory)
-        result = subprocess.call([sys.executable, "-m", "platformio", "run", "-e", "esp32s"], cwd=ROOT, env=environment)
-    if result == 0:
+        result = subprocess.call([sys.executable, "-m", "platformio", "run", "-e", target], cwd=ROOT, env=environment)
+    if result == 0 and not args.card_test:
         state.parent.mkdir(exist_ok=True)
         state.write_text(fingerprint)
     return result

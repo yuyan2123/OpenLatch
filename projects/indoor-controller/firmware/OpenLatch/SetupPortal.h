@@ -110,8 +110,9 @@ class SetupPortal {
   bool updating() const { return firmware_.active(); }
   void firmwareHealth(const FirmwareBoot& boot) { boot_ = &boot; }
   void beforeFirmwareUpdate(std::function<void()> callback) { beforeFirmware_ = std::move(callback); }
-  void nfcStatus(bool configured, bool provisioned, bool connected) {
+  void nfcStatus(bool configured, bool provisioned, bool connected, const char* transport = "") {
     nfcConfigured_ = configured; nfcProvisioned_ = provisioned; nfcConnected_ = connected;
+    nfcTransport_ = transport;
   }
   bool restartDue(uint32_t now) const { return restarting_ && uint32_t(now - restartAt_) >= 1000; }
   const char* hostname() const { return hostname_; }
@@ -408,6 +409,7 @@ class SetupPortal {
     json += String(",\"nfc_configured\":") + (nfcConfigured_ ? "true" : "false");
     json += String(",\"nfc_provisioned\":") + (nfcProvisioned_ ? "true" : "false");
     json += String(",\"nfc_connected\":") + (nfcConnected_ ? "true" : "false");
+    json += ",\"nfc_transport\":" + quoted(nfcTransport_);
     json += String(",\"default_password\":") + (!strcmp(settings_.setupPassword, door::kDefaultSetupPassword) ? "true" : "false");
     json += String(",\"settings_ready\":") + (storageReady_ ? "true" : "false");
     json += String(",\"hardware_ready\":") + (hardwareReady_ && !controller_.faulted() ? "true" : "false");
@@ -514,6 +516,7 @@ class SetupPortal {
   bool webActive_ = false, apActive_ = false, storageReady_ = false, hardwareReady_ = false;
   bool restarting_ = false;
   bool nfcConfigured_ = false, nfcProvisioned_ = false, nfcConnected_ = false;
+  const char* nfcTransport_ = "";
   wifi_ps_type_t savedSleep_ = WIFI_PS_MIN_MODEM;
   uint32_t restartAt_ = 0;
 };

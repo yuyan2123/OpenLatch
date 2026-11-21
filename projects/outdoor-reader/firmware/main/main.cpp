@@ -1,6 +1,7 @@
 #include "Protocol.h"
 #include "ChannelScan.h"
 #include "ReaderSession.h"
+#include "LanTransport.h"
 #include "Ecp.h"
 #include "PnReader.h"
 #include "esp_event.h"
@@ -29,9 +30,18 @@
 #include "credentials.example.h"
 #endif
 
+#if __has_include("reader_wifi.h")
+#include "reader_wifi.h"
+#else
+namespace reader_wifi {
+inline constexpr std::array<uint8_t, 0> ssid{}, password{};
+}
+#endif
+
 namespace {
 using namespace outdoor;
 constexpr const char* kLog = "Outdoor";
+constexpr uint32_t kJoinMs = 8000, kLanProbeMs = 3500, kWifiLossMs = 1000, kWifiRetryMs = 30000;
 uint32_t nowMs() { return uint32_t(esp_timer_get_time() / 1000); }
 static_assert(kMaxWireSize <= ESP_NOW_MAX_DATA_LEN_V2, "ESP-NOW v2 is required");
 
@@ -52,6 +62,7 @@ QueueHandle_t inbox = nullptr;
 SemaphoreHandle_t sent = nullptr;
 std::atomic<unsigned> rxQueueFull{0}, txDeliveryFailed{0};
 unsigned txSubmitFailed = 0;  // Worker-owned.
+esp_netif_t* stationInterface = nullptr;
 
 void receiveCallback(const esp_now_recv_info_t* info, const uint8_t* data, int length) {
   if (!inbox || !info || !info->src_addr || !info->des_addr || !info->rx_ctrl || !data ||
@@ -71,9 +82,12 @@ void sendCallback(const esp_now_send_info_t*, esp_now_send_status_t status) {
 
 class Radio final : public Output {
  public:
-  explicit Radio(Codec& codec) : codec_(codec) {}
+  Radio(Codec& codec, LanTransport& lan) : codec_(codec), lan_(lan) {}
+  void route(Link link, LanPeer peer = {}) { link_ = link; peer_ = peer; }
   void send(const Frame& frame) override {
     if (!codec_.encode(frame, false, wire_)) return;
+    if (link_ == Link::Wifi) { (void)lan_.send(wire_, peer_); return; }
+    if (link_ != Link::EspNow) return;
     // One in-flight send keeps callback ownership and packet order unambiguous.
     (void)xSemaphoreTake(sent, 0);
     if (esp_now_send(credentials::indoorMac.data(), wire_.bytes.data(), wire_.length) != ESP_OK) {
@@ -94,6 +108,9 @@ class Radio final : public Output {
   }
  private:
   Codec& codec_;
+  LanTransport& lan_;
+  Link link_ = Link::None;
+  LanPeer peer_{};
   Wire wire_{};
 };
 
@@ -110,6 +127,7 @@ bool configured() {
 bool setupRadio() {
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
+  if (!reader_wifi::ssid.empty()) stationInterface = esp_netif_create_default_wifi_sta();
   wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&config));
   ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
@@ -146,6 +164,27 @@ bool setupRadio() {
   ESP_ERROR_CHECK(esp_now_register_send_cb(sendCallback));
   return true;
 }
+bool joinWifi() {
+  if (!stationInterface) return false;
+  wifi_config_t config{};
+  std::copy(reader_wifi::ssid.begin(), reader_wifi::ssid.end(), config.sta.ssid);
+  std::copy(reader_wifi::password.begin(), reader_wifi::password.end(), config.sta.password);
+  return esp_wifi_set_config(WIFI_IF_STA, &config) == ESP_OK && esp_wifi_connect() == ESP_OK;
+}
+
+struct Station {
+  uint32_t address = 0;
+  uint8_t channel = 0;
+};
+
+Station wifiStation() {
+  if (!stationInterface) return {};
+  wifi_ap_record_t accessPoint{};
+  if (esp_wifi_sta_get_ap_info(&accessPoint) != ESP_OK) return {};
+  esp_netif_ip_info_t ip{};
+  const auto result = esp_netif_get_ip_info(stationInterface, &ip);
+  return {result == ESP_OK ? ip.ip.addr : 0, accessPoint.primary};
+}
 }  // namespace
 
 extern "C" void app_main() {
@@ -158,41 +197,133 @@ extern "C" void app_main() {
   if (!setupRadio()) return;
   static Hmac auth;
   static Codec codec(auth, credentials::indoorMac, credentials::outdoorMac);
-  static Radio radio(codec);
+  static LanTransport lan(credentials::hmacKey, false);
+  static Radio radio(codec, lan);
   static PnReader pn;
   static ReaderSession session(pn, radio);
   static Received message{};
   static Frame frame{};
+  static Wire incomingWifi{};
   session.begin(nowMs());
   ChannelScan scan(credentials::channels);
-  uint32_t healthAt = nowMs(), statsAt = healthAt;
   uint32_t tapStartedAt = 0;
+  Link link = joinWifi() ? Link::None : Link::EspNow;
+  radio.route(link);
+  uint32_t modeAt = nowMs(), wifiAttemptAt = modeAt, lastHelloAt = modeAt - 500;
+  uint32_t healthAt = modeAt, statsAt = modeAt;
+  uint32_t wifiAddress = 0, lastWifiAt = modeAt;
+  bool wifiEstablished = false;
+  LanPeer lanPeer{};
+  const auto changeLink = [&](Link next, uint32_t now) {
+    if (link == next) return;
+    session.begin(now);
+    if (next != Link::Wifi) { lan.stop(); lanPeer = {}; }
+    wifiEstablished = false;
+    link = next;
+    modeAt = now;
+    lastWifiAt = now;
+    lastHelloAt = now - 500;
+    radio.route(next);
+    if (next == Link::Wifi) ESP_LOGI(kLog, "Joined Wi-Fi; looking for the indoor controller");
+  };
   std::vector<uint8_t> uid;
   std::array<uint8_t, 2> atqa{};
   uint8_t sak = 0;
   ESP_LOGI(kLog, "NFC relay ready; waiting for authenticated indoor configuration");
   while (true) {
     const bool tapWasActive = session.active();
-    session.tick(nowMs());
+    const uint32_t beforeReceive = nowMs();
+    session.tick(beforeReceive);
+    const auto station = wifiStation();
+    const uint32_t address = station.address;
+    if (link == Link::None) {
+      if (address && lan.begin()) {
+        wifiAddress = address;
+        changeLink(Link::Wifi, beforeReceive);
+      } else if (uint32_t(beforeReceive - modeAt) >= kJoinMs) {
+        (void)esp_wifi_disconnect();
+        changeLink(Link::EspNow, beforeReceive);
+      }
+    } else if (link == Link::Wifi) {
+      if (address) {
+        lastWifiAt = beforeReceive;
+        if (address != wifiAddress || (wifiEstablished && !session.bound())) {
+          wifiAddress = address;
+          wifiEstablished = false;
+          session.begin(beforeReceive);
+          lanPeer = {};
+          radio.route(Link::Wifi);
+          modeAt = beforeReceive;
+          lastHelloAt = beforeReceive - 500;
+          ESP_LOGI(kLog, "Renewing the reader session over Wi-Fi");
+        }
+      }
+      if (uint32_t(beforeReceive - lastWifiAt) >= kWifiLossMs ||
+          (!session.bound() && uint32_t(beforeReceive - modeAt) >= kLanProbeMs)) {
+        ESP_LOGW(kLog, "Wi-Fi reader connection unavailable; trying ESP-NOW");
+        changeLink(Link::EspNow, beforeReceive);
+      }
+    } else if (!session.bound()) {
+      if (stationInterface && uint32_t(beforeReceive - wifiAttemptAt) >= kWifiRetryMs) {
+        wifiAttemptAt = beforeReceive;
+        if (address && lan.begin()) {
+          wifiAddress = address;
+          changeLink(Link::Wifi, beforeReceive);
+        } else if (joinWifi()) changeLink(Link::None, beforeReceive);
+      } else if (station.channel && uint32_t(beforeReceive - modeAt) >= kLeaseMs) (void)esp_wifi_disconnect();
+    }
+
+    if (link == Link::Wifi) {
+      LanPeer peer;
+      for (int budget = 0; budget < 4 && lan.receive(incomingWifi, peer); ++budget) {
+        if (!codec.decode(incomingWifi.bytes.data(), incomingWifi.length, true, frame)) continue;
+        if (session.bound()) {
+          if (peer == lanPeer) session.receive(nowMs(), frame);
+        } else if (frame.type == Type::Configure && frame.outdoor == session.nonce()) {
+          radio.route(link, peer);
+          session.receive(nowMs(), frame);
+          if (session.bound()) {
+            wifiEstablished = true;
+            lanPeer = peer;
+            ESP_LOGI(kLog, "Reader linked over Wi-Fi");
+          } else radio.route(link);
+        }
+      }
+    }
     // Process a bounded number of packets so traffic cannot starve timeouts.
+    const uint8_t espNowChannel = station.channel ? station.channel : scan.current();
     for (int budget = 0; budget < 4 && xQueueReceive(inbox, &message, 0) == pdTRUE; ++budget) {
-      if (message.channel == scan.current() &&
-          codec.decode(message.bytes.data(), message.length, true, frame)) session.receive(nowMs(), frame);
+      if (link == Link::EspNow && message.channel == espNowChannel &&
+          codec.decode(message.bytes.data(), message.length, true, frame)) {
+        const bool wasConnected = session.bound();
+        session.receive(nowMs(), frame);
+        if (!wasConnected && session.bound()) {
+          scan.remember(message.channel);
+          ESP_LOGI(kLog, "Reader linked over ESP-NOW");
+        }
+      }
     }
     const uint32_t now = nowMs();
     if (tapWasActive && !session.active()) {
       ESP_LOGI(kLog, "Reader tap ended: duration_ms=%lu", static_cast<unsigned long>(now - tapStartedAt));
     }
-    if (uint32_t(now - statsAt) >= 10000) {
+    if (link == Link::EspNow && uint32_t(now - statsAt) >= 10000) {
       statsAt = now;
       ESP_LOGI(kLog, "ESP-NOW channel=%u bound=%d rx_queue_full=%u tx_submit_failed=%u tx_delivery_failed=%u",
-               unsigned(scan.current()), int(session.bound()), rxQueueFull.load(std::memory_order_relaxed),
+               unsigned(espNowChannel), int(session.bound()), rxQueueFull.load(std::memory_order_relaxed),
                txSubmitFailed, txDeliveryFailed.load(std::memory_order_relaxed));
     }
-    if (scan.probeDue(now, session.bound())) {
-      ESP_ERROR_CHECK(esp_wifi_set_channel(scan.current(), WIFI_SECOND_CHAN_NONE));
-      session.hello();
-    } else if (session.bound() && !session.active()) {
+    if (link == Link::EspNow && session.bound()) (void)scan.probeDue(now, true);
+    if (!session.bound()) {
+      if (link == Link::EspNow && !station.channel) {
+        if (scan.probeDue(now, false) && esp_wifi_set_channel(scan.current(), WIFI_SECOND_CHAN_NONE) == ESP_OK)
+          session.hello();
+      } else if (link != Link::None && uint32_t(now - lastHelloAt) >= 500) {
+        lastHelloAt = now;
+        if (link == Link::Wifi) radio.route(link);
+        session.hello();
+      }
+    } else if (!session.active()) {
       if (uint32_t(now - healthAt) >= 2000) {
         healthAt = now;
         if (!pn.healthy()) { session.begin(nowMs()); continue; }

@@ -61,8 +61,22 @@ struct HomeKeyAccessService final : Service::NFCAccess {
     std::vector<uint8_t> bytes(input.pack_size()); input.pack(bytes.data());
     HK_HomeKit provisioning(store, [this]() { store.clearIdentity(); }, bytes);
     auto output = provisioning.processResult();
-    if (!store.healthy() || output.empty()) return false;
-    TLV8 response(nullptr, 0); response.unpack(output.data(), output.size()); point->setTLV(response, false);
+    if (!store.healthy()) return false;
+    TLV8 response(nullptr, 0);
+    if (output.empty()) {
+      constexpr uint8_t kReaderOperationTag = 0x01;
+      constexpr uint8_t kReadOperation = 0x01;
+      constexpr uint8_t kReaderKeyRequestTag = 0x06;
+      const auto operation = input.find(kReaderOperationTag);
+      const auto& identity = store.reader_identity();
+      // Apple Home can query the reader key before it has provisioned one.
+      if (input.len(operation) != 1 || (*operation)[0] != kReadOperation ||
+          input.find(kReaderKeyRequestTag) == input.end() ||
+          (!identity.private_key.empty() && !identity.group_identifier.empty())) return false;
+    } else {
+      response.unpack(output.data(), output.size());
+    }
+    point->setTLV(response, false);
     return true;
   }
 };

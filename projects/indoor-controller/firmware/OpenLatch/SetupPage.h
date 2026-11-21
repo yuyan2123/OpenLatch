@@ -354,7 +354,8 @@ function render(state){
   byId("firmware-version").textContent=state.firmware_version||"Unknown version";
   byId("firmware-hint").textContent="Choose OpenLatch.ino.bin."+(state.ota_max_bytes?" Up to "+(state.ota_max_bytes/1048576).toFixed(2)+" MB.":"");
   if(!firmwareNotice)firmwareMessage(state.ota_supported?"Door release pauses during the update.":"Install the OTA firmware over USB first.",false,false);
-  byId("nfc-state").textContent=state.nfc_lockout_remaining_ms>0?"Home Key paused. "+Math.ceil(state.nfc_lockout_remaining_ms/1000)+" seconds remaining.":!state.nfc_configured?"Reader connection is not configured.":!state.nfc_provisioned?"Set up Home Key in Apple Home.":!state.nfc_connected?"Waiting for the outdoor reader.":(state.nfc_failures??0)+" failed attempts. Reader connected.";
+  const readerConnection=state.nfc_transport==="wifi"?"Reader connected via Wi-Fi.":state.nfc_transport==="esp-now"?"Reader connected via ESP-NOW.":"Reader connected.";
+  byId("nfc-state").textContent=state.nfc_lockout_remaining_ms>0?"Home Key paused. "+Math.ceil(state.nfc_lockout_remaining_ms/1000)+" seconds remaining.":!state.nfc_configured?"Reader connection is not configured.":!state.nfc_provisioned?"Set up Home Key in Apple Home.":!state.nfc_connected?"Waiting for the outdoor reader.":(state.nfc_failures??0)+" failed attempts. "+readerConnection;
   byId("network").textContent=state.connected?"Connected to "+state.ssid:"Setup hotspot: "+state.ap_name;
   byId("address").textContent=state.ip;
   syncCountdown(state,renewed);

@@ -14,6 +14,7 @@ constexpr size_t kMaxWireSize = kHeaderSize + kMaxPayload + kTagSize;
 constexpr size_t kMaxCommand = 252;
 enum class Type : uint8_t { Hello = 1, Configure, Ping, Tag, Exchange, Response, Release, Ack, Error };
 enum class Code : uint8_t { Ok = 0, Invalid, NoTag, ReaderError, Expired };
+enum class Link : uint8_t { None, EspNow, Wifi };
 
 struct Frame {
   Type type = Type::Hello;

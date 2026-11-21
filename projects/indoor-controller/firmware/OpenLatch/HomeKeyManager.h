@@ -12,6 +12,7 @@
 #include <atomic>
 #include <memory>
 #include "IndoorSession.h"
+#include <LanTransport.h>
 #include "HomeKeyStore.h"
 #include "HomeKeyCrypto.h"
 #include "NfcAttemptLimiter.h"
@@ -52,7 +53,14 @@ class HomeKeyManager {
   void enabled(bool value) { if (enabled_.exchange(value) && !value) ++admission_; }
   bool configured() const { return configured_; }
   bool provisioned() const { return provisioned_; }
-  bool connected() const { return connected_; }
+  bool connected() const { return connectedLink_ != outdoor::Link::None; }
+  const char* transport() const {
+    switch (connectedLink_.load()) {
+      case outdoor::Link::Wifi: return "wifi";
+      case outdoor::Link::EspNow: return "esp-now";
+      default: return "";
+    }
+  }
   bool healthy() const { return store_.healthy() && (!credentials::provisioned || configured_); }
   // Main loop consumes each result once. Queued results expire, and any pause
   // or credential edit invalidates results produced before that change.
@@ -60,7 +68,7 @@ class HomeKeyManager {
     Verified result{};
     return verified_ && xQueueReceive(verified_, &result, 0) == pdTRUE && enabled_ &&
            result.admission == admission_ && result.generation == store_.generation() && store_.healthy() &&
-           uint32_t(now - result.at) < 250 && connected_ && WiFi.status() == WL_CONNECTED;
+           uint32_t(now - result.at) < 250 && connected() && WiFi.status() == WL_CONNECTED;
   }
  private:
   struct Received { uint16_t length; std::array<uint8_t, outdoor::kMaxWireSize> bytes; };
@@ -103,18 +111,33 @@ class HomeKeyManager {
     std::copy(credentials::lmk.begin(), credentials::lmk.end(), peer.lmk);
     return esp_now_add_peer(&peer) == ESP_OK && esp_now_register_recv_cb(receive) == ESP_OK;
   }
-  void pump() {
-    session_.tick(millis());
-    for (int budget = 0; budget < 4 && xQueueReceive(inbox_, &incoming_, 0) == pdTRUE; ++budget) {
-      if (!codec_.decode(incoming_.bytes.data(), incoming_.length, false, frame_)) continue;
-      if (!session_.bound() && !session_.waiting() && frame_.type == outdoor::Type::Hello) {
-        outdoor::Nonce nonce{}; do { esp_fill_random(nonce.data(), nonce.size()); } while (!outdoor::nonzero(nonce));
-        session_.configure(millis(), frame_, nonce, group_);
-      } else session_.receive(millis(), frame_);
+  void receiveFrame(const uint8_t* data, size_t length, outdoor::Link link, outdoor::LanPeer peer = {}) {
+    if (!codec_.decode(data, length, false, frame_)) return;
+    if (!session_.bound() && !session_.waiting()) {
+      if (frame_.type != outdoor::Type::Hello) return;
+      outdoor::Nonce nonce{}; do { esp_fill_random(nonce.data(), nonce.size()); } while (!outdoor::nonzero(nonce));
+      if (session_.configure(millis(), frame_, nonce, group_)) { link_ = link; lanPeer_ = peer; }
+      return;
     }
-    if (session_.transmit(millis(), outgoing_) && codec_.encode(outgoing_, true, wire_))
-      (void)esp_now_send(credentials::outdoorMac.data(), wire_.bytes.data(), wire_.length);
-    connected_ = session_.bound();
+    if (link == link_ && (link != outdoor::Link::Wifi || peer == lanPeer_)) session_.receive(millis(), frame_);
+  }
+  void pump() {
+    const uint32_t now = millis();
+    session_.tick(now);
+    if (!lanListening_ && uint32_t(now - lanAttemptAt_) >= 1000) {
+      lanAttemptAt_ = now;
+      lanListening_ = lan_.begin();
+    }
+    outdoor::LanPeer peer;
+    for (int budget = 0; budget < 4 && lan_.receive(wire_, peer); ++budget)
+      receiveFrame(wire_.bytes.data(), wire_.length, outdoor::Link::Wifi, peer);
+    for (int budget = 0; budget < 4 && xQueueReceive(inbox_, &incoming_, 0) == pdTRUE; ++budget)
+      receiveFrame(incoming_.bytes.data(), incoming_.length, outdoor::Link::EspNow);
+    if (session_.transmit(millis(), outgoing_) && codec_.encode(outgoing_, true, wire_)) {
+      if (link_ == outdoor::Link::Wifi) (void)lan_.send(wire_, lanPeer_);
+      else (void)esp_now_send(credentials::outdoorMac.data(), wire_.bytes.data(), wire_.length);
+    }
+    connectedLink_ = session_.bound() ? link_ : outdoor::Link::None;
   }
   bool exchange(std::vector<uint8_t>& command, std::vector<uint8_t>& response) {
     if (!enabled_ || admission_ != attemptAdmission_ || !session_.exchange(millis(), command.data(), command.size())) {
@@ -164,7 +187,11 @@ class HomeKeyManager {
  public:
   // Called only by the NFC task. One iteration is also driven by host adapter tests.
   uint32_t poll() {
-    if (WiFi.status() != WL_CONNECTED) { session_.reset(); connected_ = false; return 50; }
+    if (WiFi.status() != WL_CONNECTED) {
+      if (lanListening_) { lan_.stop(); lanListening_ = false; }
+      session_.reset(); connectedLink_ = outdoor::Link::None;
+      return 50;
+    }
     if (!radio_) {
       radio_ = radioBegin();
       if (!radio_) { configured_ = false; return 0; }
@@ -173,7 +200,7 @@ class HomeKeyManager {
       std::unique_lock<std::mutex> lock(store_.mutex, std::try_to_lock);
       if (!lock) return 5;
       provisioned_ = store_.provisioned();
-      if (!provisioned_) { session_.reset(); connected_ = false; }
+      if (!provisioned_) { session_.reset(); connectedLink_ = outdoor::Link::None; }
       else if (store_.generation() != generation_) {
         const auto& id = store_.reader_identity().group_identifier;
         std::array<uint8_t,8> group{}; std::copy(id.begin(), id.end(), group.begin());
@@ -199,10 +226,16 @@ class HomeKeyManager {
   inline static HomeKeyManager* instance_ = nullptr;
   HomeKeyStore& store_; door::NfcAttemptLimiter& attempts_;
   Hmac auth_; outdoor::Codec codec_; door::IndoorSession session_;
+  outdoor::LanTransport lan_{credentials::hmacKey, true};
+  outdoor::LanPeer lanPeer_{};
+  outdoor::Link link_ = outdoor::Link::None;
+  std::atomic<outdoor::Link> connectedLink_{outdoor::Link::None};
+  uint32_t lanAttemptAt_ = uint32_t(0) - 1000;
+  bool lanListening_ = false;
   QueueHandle_t inbox_ = nullptr, verified_ = nullptr;
   Received incoming_{}; outdoor::Frame frame_{}, outgoing_{}, response_{}; outdoor::Wire wire_{};
   std::array<uint8_t,8> group_{};
-  std::atomic<bool> enabled_{false}, configured_{false}, provisioned_{false}, connected_{false};
+  std::atomic<bool> enabled_{false}, configured_{false}, provisioned_{false};
   std::atomic<uint32_t> admission_{0};
   uint32_t attemptAdmission_ = 0;
   bool transportError_ = false, radio_ = false;

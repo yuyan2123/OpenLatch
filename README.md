@@ -32,12 +32,12 @@ flowchart LR
     home["Apple 家庭"] -->|HomeKit| indoor["ESP32-C3<br/>門內控制器"]
     remote["紅外線遙控器"] -->|IR| indoor
     phone["iPhone / Apple Watch"] <-->|NFC| outdoor["ESP-32S + PN532<br/>門外讀取器"]
-    outdoor <-->|加密 ESP-NOW| indoor
+    outdoor <-->|加密 Wi‑Fi / ESP‑NOW| indoor
     indoor -->|GPIO4| relay["繼電器"]
     relay --> contact["已確認的開門按鈕接點"]
 ```
 
-Home Key 憑證與開門授權留在門內；門外只轉送 NFC 交握，不接繼電器或門鎖控制線。通訊使用加密 ESP-NOW、HMAC 與交握識別，門內不依卡號或門外自報成功開門。詳見[系統架構](docs/architecture.md)與[通訊規劃](docs/communication.md)。
+Home Key 憑證與開門授權留在門內，門外只轉送 NFC 交握。通訊優先使用加密 Wi‑Fi UDP，ESP‑NOW 為備援，兩者都使用 HMAC 與交握識別。詳見[系統架構](docs/architecture.md)與[通訊規劃](docs/communication.md)。
 
 ## 先在電腦上試跑
 
@@ -123,7 +123,7 @@ python tools/test.py
 | [紅外線設定](projects/indoor-controller/docs/infrared_setup.md) | 按鍵學習、支援協定與 USB 診斷 |
 | [Home Key](projects/indoor-controller/docs/homekey_setup.md) | 雙板配置、憑證佈建與錯誤限制 |
 | [OTA 更新](projects/indoor-controller/docs/ota_setup.md) | 首次安裝、映像選擇與失敗處理 |
-| [NFC 通訊協定](projects/outdoor-reader/docs/protocol.md) | ESP-NOW 封包、交握與重送處理 |
+| [NFC 通訊協定](projects/outdoor-reader/docs/protocol.md) | Wi‑Fi、ESP‑NOW、交握與重送處理 |
 
 手冊仍含舊版網頁與登入流程；目前介面操作以各設定文件及[控制器 README](projects/indoor-controller/README.md)為準。
 

@@ -6,6 +6,23 @@ class TLV8{
  public:std::vector<uint8_t> bytes;TLV8(void*,int){} void add(int tag,int value){bytes.push_back(uint8_t(tag));bytes.push_back(uint8_t(value));}
  size_t pack_size()const{return bytes.size();}void pack(uint8_t* out)const{std::copy(bytes.begin(),bytes.end(),out);}
  void unpack(const uint8_t* in,size_t size){bytes.assign(in,in+size);}
+
+ struct Field {
+   const uint8_t* header = nullptr;
+   bool operator==(Field other) const { return header == other.header; }
+   const uint8_t* operator*() const { return header + 2; }
+ };
+ Field end() const { return {}; }
+ Field find(uint8_t tag) const {
+   for (size_t offset = 0; offset + 2 <= bytes.size();) {
+     const size_t next = offset + 2 + bytes[offset + 1];
+     if (next > bytes.size()) break;
+     if (bytes[offset] == tag) return {bytes.data() + offset};
+     offset = next;
+   }
+   return end();
+ }
+ int len(Field field) const { return field.header ? field.header[1] : -1; }
 };
 class SpanCharacteristic{
  public:int value=1,newValue=1;bool pending=false;std::vector<uint8_t> input,response;

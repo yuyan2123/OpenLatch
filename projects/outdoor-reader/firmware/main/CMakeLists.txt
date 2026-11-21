@@ -1,3 +1,10 @@
+if(OUTDOOR_PN532_CARD_TEST)
+    idf_component_register(SRCS "Pn532CardTest.cpp"
+        PRIV_REQUIRES esp_driver_gpio pn532_hal pn532_cxx)
+    target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_20)
+    return()
+endif()
+
 set(PRIVATE_INCLUDES "")
 if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../private")
     list(APPEND PRIVATE_INCLUDES "../../private")

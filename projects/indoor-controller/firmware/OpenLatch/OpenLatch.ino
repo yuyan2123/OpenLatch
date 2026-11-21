@@ -257,7 +257,7 @@ void loop() {
   const bool nfcEnabled = hardwareReady && !controller.faulted() && !setupPortal.restarting() && !setupPortal.updating() && !setupPortal.irLearning();
   homeKey.enabled(nfcEnabled);
   relay.permitNfc(nfcEnabled);
-  setupPortal.nfcStatus(homeKey.configured(), homeKey.provisioned(), homeKey.connected());
+  setupPortal.nfcStatus(homeKey.configured(), homeKey.provisioned(), homeKey.connected(), homeKey.transport());
   if (!setupPortal.restarting() && !setupPortal.updating()) pollSerial();
   setupPortal.poll();
   if (firmwarePaused && !setupPortal.updating() && !setupPortal.restarting()) {

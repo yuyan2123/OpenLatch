@@ -3,9 +3,9 @@
 | 專案 | 職責 |
 | --- | --- |
 | [indoor-controller](../projects/indoor-controller/README.md) | ESP32-C3 門內控制器，處理 HomeKit、Home Key 憑證驗證、紅外線及繼電器輸出 |
-| [outdoor-reader](../projects/outdoor-reader/README.md) | ESP-32S＋PN532，透過 ESP-NOW 轉送 NFC；不控制門鎖 |
+| [outdoor-reader](../projects/outdoor-reader/README.md) | ESP-32S＋PN532，透過 Wi‑Fi 或 ESP‑NOW 轉送 NFC |
 
-門外使用 ESP-32S、4 MB Flash 與 PN532 SPI，加密 ESP-NOW 單播搭配 HMAC、nonce 與重送處理。門內接收、APDU 往返、HomeKey 憑證佈建與獨立驗證均已實作，待雙板 MAC 配置與實機驗證。
+門外使用 ESP-32S、4 MB Flash 與 PN532 SPI。兩片板在同一區網時優先用加密 Wi‑Fi UDP，ESP‑NOW 為備援。兩條路徑使用相同的 HMAC、nonce 與重送規則。
 
 控制器提供 1–800 ms 自訂脈衝（預設 200 ms）、2 秒冷卻與 3 秒啟動保護。HomeKey 使用獨立的 NFC 來源權限並共用輸出限制；沒有 HTTP 開門 API。連續驗證失敗預設 5 次後暫停 NFC 60 秒，可在 RFID 分頁設定；不影響 HomeKit 與 IR 授權。操作與限制見 [Home Key](../projects/indoor-controller/docs/homekey_setup.md)。
 

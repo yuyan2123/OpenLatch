@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <future>
+#include <string>
 #include <thread>
 #include "../firmware/OpenLatch/HomeKeyManager.h"
 #include "../firmware/OpenLatch/HomeKeyServices.h"
@@ -24,9 +25,15 @@ struct TestReader : outdoor::Reader {
 };
 struct TestOutput : outdoor::Output {
   TestAuth auth; outdoor::Codec codec{auth,credentials::indoorMac,credentials::outdoorMac};
+  bool overWifi = false;
+  const outdoor::LanPeer lanPeer{1};
   int frames = 0; outdoor::Frame last{};
   void send(const outdoor::Frame& frame) override {
     ++frames; last=frame; outdoor::Wire wire; CHECK(codec.encode(frame,false,wire));
+    if (overWifi) {
+      outdoor::fakeLanIncoming.emplace_back(wire, lanPeer);
+      return;
+    }
     esp_now_recv_info_t info{credentials::outdoorMac.data(),credentials::indoorMac.data()};
     if(fakeReceive)fakeReceive(&info,wire.bytes.data(),int(wire.length));
   }
@@ -35,11 +42,12 @@ struct TestOutput : outdoor::Output {
 struct Fixture {
   HomeKeyStore store; door::NfcAttemptLimiter attempts; HomeKeyManager manager{store,attempts};
   TestReader reader; TestOutput output; outdoor::ReaderSession outside{reader,output};
-  Fixture() {
+  explicit Fixture(bool preferWifi = false) {
     fakeMillis=0;WiFi={};WiFi.connected=true;fakeQueues.clear();fakeReceive=nullptr;
     fakeQueueFailure=fakeTaskFailure=fakeRadioFailure=fakeSendFailure=fakeShaFailure=false;
     fakeRadioStarts=fakeProfileRuns=0;fakeCredentialValid=true;fakeProfileStalls=false;fakeDelayHook={};fakeVerificationHook={};fakeProvisionHook={};
     fakeProvisionReply={1,1,0};fakeStationMac=credentials::indoorMac;
+    outdoor::fakeLanIncoming.clear();outdoor::fakeLanSend={};
     nvsRecord.clear();nvsPending.clear();nvsWrites=0;
     nvsOpenFails=nvsReadFails=nvsWriteFails=nvsCommitFails=nvsCorruptReadback=false;
     attempts.begin();CHECK(manager.begin());
@@ -54,7 +62,18 @@ struct Fixture {
     endpoint.public_key_x.assign(32,8);endpoint.persistent_key.assign(32,9);issuer.endpoints.push_back(endpoint);
     store.issuerList().push_back(issuer);store.save();CHECK(store.provisioned());manager.enabled(true);
     fakeRadioSend=[this](const uint8_t* bytes,size_t size){outdoor::Frame frame;CHECK(output.codec.decode(bytes,size,true,frame));outside.receive(fakeMillis,frame);};
-    outside.begin(0);CHECK(manager.poll()>0);outside.hello();manager.poll();manager.poll();CHECK(manager.connected());
+    outside.begin(0);CHECK(manager.poll()>0);
+    if (preferWifi) {
+      outdoor::fakeLanSend = [this](const outdoor::Wire& wire, outdoor::LanPeer peer) {
+        CHECK(peer == output.lanPeer);
+        outdoor::Frame frame;
+        CHECK(output.codec.decode(wire.bytes.data(), wire.length, true, frame));
+        outside.receive(fakeMillis, frame);
+      };
+      outside.hello(); // An ESP-NOW discovery packet is already queued.
+      output.overWifi = true;
+    }
+    outside.hello();manager.poll();manager.poll();CHECK(manager.connected());
     homeKeyControllersPending=false;
   }
   void tap() {
@@ -71,6 +90,30 @@ void verified_results_are_single_use_and_expire() {
   {Fixture f;f.tap();f.store.save();CHECK(!f.manager.takeVerified(fakeMillis));}
   {Fixture f;f.tap();WiFi.connected=false;CHECK(!f.manager.takeVerified(fakeMillis));f.manager.poll();CHECK(!f.manager.connected());}
   {Fixture f;f.tap();f.tap();CHECK(!f.manager.takeVerified(fakeMillis));f.tap();CHECK(f.manager.takeVerified(fakeMillis));}
+}
+void wifi_takes_priority_and_completes_one_tap() {
+  Fixture f(true);
+  CHECK(std::string(f.manager.transport()) == "wifi");
+  f.tap();
+  CHECK(f.reader.exchanges == 2);
+  CHECK(f.manager.takeVerified(fakeMillis));
+  CHECK(!f.manager.takeVerified(fakeMillis));
+  const outdoor::Frame lastWifiFrame = f.output.last;
+  f.output.overWifi = false;
+  f.output.send(lastWifiFrame);
+  f.manager.poll();
+  CHECK(f.manager.connected());
+  CHECK(!f.manager.takeVerified(fakeMillis));
+
+  fakeMillis += door::IndoorSession::kLeaseMs;
+  outdoor::fakeLanIncoming.clear();
+  f.manager.poll();
+  CHECK(!f.manager.connected());
+  f.outside.begin(fakeMillis);
+  f.outside.hello();
+  f.manager.poll();
+  f.manager.poll();
+  CHECK(std::string(f.manager.transport()) == "esp-now");
 }
 void invalid_and_aborted_attempts_are_separate() {
   {Fixture f;fakeCredentialValid=false;f.tap();CHECK(!f.manager.takeVerified(fakeMillis));CHECK(f.attempts.failures(fakeMillis)==1);
@@ -108,6 +151,30 @@ void provisioning_is_bounded_and_storage_failure_is_closed() {
   access.point->pending=true;fakeProvisionHook=[](ddk::CredentialStore& store){store.save();};nvsWriteFails=true;
   CHECK(!access.update());CHECK(!f.store.healthy());CHECK(!f.manager.takeVerified(fakeMillis));
 }
+void reader_key_query_before_provisioning_returns_empty_tlv() {
+  Fixture f;
+  HomeKeyAccessService access(f.store);
+  const std::vector<uint8_t> readReaderKey{0x01, 0x01, 0x01, 0x06, 0x00};
+  access.point->input = readReaderKey;
+  access.point->pending = true;
+  CHECK(access.update());
+  CHECK(access.point->response == fakeProvisionReply);
+
+  f.store.clearIdentity();
+  const auto writesBeforeQuery = nvsWrites;
+  fakeProvisionReply.clear();
+  access.point->pending = true;
+  CHECK(access.update());
+  CHECK(access.point->response.empty());
+  CHECK(!f.store.provisioned());
+  CHECK(nvsWrites == writesBeforeQuery);
+
+  access.point->pending = true;
+  access.point->input = {0x01, 0x01, 0x02, 0x06, 0x00};
+  CHECK(!access.update());
+  access.point->input = {0x01, 0x01, 0x01};
+  CHECK(!access.update());
+}
 void initialization_and_traffic_failures() {
   {Fixture f;fakeSendFailure=true;fakeMillis+=1000;f.manager.poll();f.manager.poll();fakeMillis+=1600;f.manager.poll();CHECK(!f.manager.connected());}
   {Fixture f;outdoor::Wire wire;CHECK(f.output.codec.encode(f.output.last,false,wire));
@@ -122,7 +189,7 @@ void initialization_and_traffic_failures() {
   {HomeKeyManager manager(store,attempts);CHECK(manager.begin());fakeRadioFailure=true;CHECK(manager.poll()==0);CHECK(!manager.configured());fakeRadioFailure=false;}
 }
 int main() {
-  verified_results_are_single_use_and_expire();invalid_and_aborted_attempts_are_separate();tag_before_ping_ack_is_not_discarded();pairing_changes_revoke_pending_results();
-  provisioning_is_bounded_and_storage_failure_is_closed();initialization_and_traffic_failures();
+  verified_results_are_single_use_and_expire();wifi_takes_priority_and_completes_one_tap();invalid_and_aborted_attempts_are_separate();tag_before_ping_ack_is_not_discarded();pairing_changes_revoke_pending_results();
+  provisioning_is_bounded_and_storage_failure_is_closed();reader_key_query_before_provisioning_returns_empty_tlv();initialization_and_traffic_failures();
   std::cout<<"PASS: actual NFC manager/services, paired APDU transport, result expiry/revocation, limits, provisioning and radio/queue/task failures.\n";
 }

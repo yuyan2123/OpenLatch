@@ -250,7 +250,12 @@ void channelScanning() {
   CHECK(!scan.probeDue(start + 1001, false));
   CHECK(scan.probeDue(start + 1002, false) && scan.current() == 13);
   CHECK(scan.probeDue(start + 1502, false) && scan.current() == 1);
+  scan.remember(6);
+  CHECK(!scan.probeDue(start + 1503, true));
+  CHECK(scan.probeDue(start + 1504, false) && scan.current() == 6);
   ChannelScan single(1u << 10);
+  single.remember(13);
+  CHECK(!single.probeDue(0, true));
   CHECK(single.probeDue(0, false) && single.current() == 11);
   CHECK(single.probeDue(500, false) && single.current() == 11);
   std::cout << "PASS: preferred channel on reconnect, masked fallback, single channel and clock wrap.\n";
