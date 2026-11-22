@@ -55,11 +55,11 @@ class HomeKeyManager {
   void enabled(bool value) { if (enabled_.exchange(value) && !value) ++admission_; }
   // The loop supplies the list revision and current permission as one snapshot.
   void fobAdmission(uint32_t revision, bool accept) { fobAdmission_ = (revision << 1) | uint32_t(accept); }
-  bool takeFob(uint32_t now, door::RfidUid& uid) {
+  bool takeFob(door::RfidUid& uid) {
     door::IndoorSession::Tag tag;
     if (!fobs_ || xQueueReceive(fobs_, &tag, 0) != pdTRUE ||
         !(tag.admission & 1) || tag.admission != fobAdmission_ ||
-        uint32_t(now - tag.at) >= 250 || !connected() || WiFi.status() != WL_CONNECTED) return false;
+        uint32_t(millis() - tag.at) >= kResultAgeMs || !connected() || WiFi.status() != WL_CONNECTED) return false;
     uid = {tag.uid, tag.length};
     return true;
   }
@@ -76,13 +76,14 @@ class HomeKeyManager {
   bool healthy() const { return store_.healthy() && (!credentials::provisioned || configured_); }
   // Main loop consumes each result once. Queued results expire, and any pause
   // or credential edit invalidates results produced before that change.
-  bool takeVerified(uint32_t now) {
+  bool takeVerified() {
     Verified result{};
     return verified_ && xQueueReceive(verified_, &result, 0) == pdTRUE && enabled_ &&
            result.admission == admission_ && result.generation == store_.generation() && store_.healthy() &&
-           uint32_t(now - result.at) < 250 && connected() && WiFi.status() == WL_CONNECTED;
+           uint32_t(millis() - result.at) < kResultAgeMs && connected() && WiFi.status() == WL_CONNECTED;
   }
  private:
+  static constexpr uint32_t kResultAgeMs = 250;
   struct Received { uint16_t length; std::array<uint8_t, outdoor::kMaxWireSize> bytes; };
   struct Verified { uint32_t at, generation, admission; };
   template<size_t N> static bool nonzero(const std::array<uint8_t, N>& value) {
@@ -166,7 +167,10 @@ class HomeKeyManager {
   }
   void authenticate() {
     const auto attempt = attempts_.start(millis());
-    if (!attempt) { session_.release(millis()); return; }
+    if (!attempt) {
+      Serial.println("nfc_homekey: verification unavailable");
+      session_.release(millis()); return;
+    }
     std::unique_lock<std::mutex> lock(store_.mutex, std::try_to_lock);
     if (!lock || !store_.provisioned() || !enabled_) {
       attempts_.complete(millis(), attempt, door::NfcAttemptLimiter::Verdict::Aborted);
@@ -194,7 +198,8 @@ class HomeKeyManager {
     if (attempts_.complete(millis(), attempt, verdict) && session_.active()) {
       Verified result{millis(), store_.generation(), attemptAdmission_};
       (void)xQueueSend(verified_, &result, 0);
-    }
+    } else if (transportError_) Serial.println("nfc_homekey: APDU exchange failed");
+    else if (verdict == door::NfcAttemptLimiter::Verdict::InvalidCredential) Serial.println("nfc_homekey: credential rejected");
     session_.release(millis());
   }
  public:
@@ -225,8 +230,8 @@ class HomeKeyManager {
       }
     }
     pump();
-    // A Tag may arrive before an outstanding Ping ACK. Keep it pending until
-    // that request completes; consuming it early would discard a valid tap.
+    // A previous Release may still be pending. A new Tag supersedes a Ping in
+    // the session, so keepalive retries cannot delay NFC authentication.
     door::IndoorSession::Tag tag;
     if (!session_.waiting() && session_.takeTag(millis(), &tag)) {
       // Reserve ISO-DEP targets for the Home Key APDU path.

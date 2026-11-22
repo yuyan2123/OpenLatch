@@ -449,10 +449,20 @@ void rename_routes_validate_and_preserve_credentials() {
   fakeWeb->request("/api/rfid/rename", HTTP_POST); CHECK(fakeWeb->code == 200);
   CHECK(f.fobs.displayName(0).empty());
 }
+void paired_reader_stays_awake_after_setup_expires() {
+  Fixture f(true);
+  f.portal.keepWifiAwake();
+  WiFi.connected = true;
+  f.portal.poll(); CHECK(fakeWeb->active);
+  fakeMillis = door::kSetupWindowMs;
+  f.portal.poll(); CHECK(!fakeWeb->active);
+  CHECK(WiFi.getSleep() == WIFI_PS_NONE);
+}
 int main() {
   password_modes_and_old_password();
   authentication_and_request_guards(); browser_learning_and_forget();
   expiry_and_late_offline_recovery(); save_validation_and_restart(); relay_time_validation(); nfc_limits_validation_and_status();
+  paired_reader_stays_awake_after_setup_expires();
   setup_button_learning_and_reopening(); activity_and_status_polling();
   multiple_buttons_removal_and_conflicts(); full_button_list_is_rejected();
   fob_learning_persistence_and_removal(); fob_capacity_timeout_and_storage_failure();

@@ -42,6 +42,12 @@ class IndoorSession {
         !frame.request && frame.length >= 5 && frame.payload[0] >= 1 && frame.payload[0] <= 10 &&
         frame.length == uint16_t(frame.payload[0] + 4)) {
       if (active_) return;
+      // A fresh authenticated tap can supersede a keepalive. A late Ping ACK
+      // cannot acknowledge the following Exchange or Release.
+      if (waiting_ && pending_.type == Type::Ping) {
+        waiting_ = false;
+        leaseAt_ = now;
+      }
       lastTap_ = tap_ = frame.tap; tapAt_ = now; requestId_ = 0;
       tag_ = {};
       tag_.length = frame.payload[0];

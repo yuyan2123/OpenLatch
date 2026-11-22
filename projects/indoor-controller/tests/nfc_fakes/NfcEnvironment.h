@@ -14,6 +14,7 @@ inline int fakeRadioStarts=0, fakeProfileRuns=0;
 inline std::function<void()> fakeDelayHook;
 struct FakeQueue { size_t capacity, size; std::deque<std::vector<uint8_t>> items; };
 using QueueHandle_t=FakeQueue*;
+inline std::function<void(QueueHandle_t)> fakeQueueReceiveHook;
 inline std::vector<std::unique_ptr<FakeQueue>> fakeQueues;
 inline QueueHandle_t xQueueCreate(size_t capacity,size_t size) {
   if(fakeQueueFailure)return nullptr;
@@ -24,6 +25,7 @@ inline int xQueueSend(QueueHandle_t queue,const void* input,int) {
   const auto* bytes=static_cast<const uint8_t*>(input); queue->items.emplace_back(bytes,bytes+queue->size); return 1;
 }
 inline int xQueueReceive(QueueHandle_t queue,void* output,int) {
+  if(fakeQueueReceiveHook)fakeQueueReceiveHook(queue);
   if(!queue||queue->items.empty())return 0;
   std::memcpy(output,queue->items.front().data(),queue->size);queue->items.pop_front();return 1;
 }

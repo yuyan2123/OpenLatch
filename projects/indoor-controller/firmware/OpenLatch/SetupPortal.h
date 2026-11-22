@@ -113,6 +113,11 @@ class SetupPortal {
     });
     pollNetwork();
   }
+  // A paired NFC reader needs low receive latency outside the setup window too.
+  void keepWifiAwake() {
+    savedSleep_ = WIFI_PS_NONE;
+    WiFi.setSleep(WIFI_PS_NONE);
+  }
 
   void poll() {
     const uint32_t now = millis();

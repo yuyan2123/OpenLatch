@@ -25,11 +25,13 @@ struct TestReader : outdoor::Reader {
 };
 struct TestOutput : outdoor::Output {
   TestAuth auth; outdoor::Codec codec{auth,credentials::indoorMac,credentials::outdoorMac};
-  bool overWifi = false;
+  bool overWifi = false, dropPingAcks = false;
   const outdoor::LanPeer lanPeer{1};
   int frames = 0; outdoor::Frame last{};
   void send(const outdoor::Frame& frame) override {
-    ++frames; last=frame; outdoor::Wire wire; CHECK(codec.encode(frame,false,wire));
+    ++frames; last=frame;
+    if (dropPingAcks && frame.type == outdoor::Type::Ack && !frame.tap) return;
+    outdoor::Wire wire; CHECK(codec.encode(frame,false,wire));
     if (overWifi) {
       outdoor::fakeLanIncoming.emplace_back(wire, lanPeer);
       return;
@@ -37,7 +39,11 @@ struct TestOutput : outdoor::Output {
     esp_now_recv_info_t info{credentials::outdoorMac.data(),credentials::indoorMac.data()};
     if(fakeReceive)fakeReceive(&info,wire.bytes.data(),int(wire.length));
   }
-  outdoor::Nonce randomNonce() override { outdoor::Nonce nonce{};nonce[0]=uint8_t(esp_random());return nonce; }
+  outdoor::Nonce randomNonce() override {
+    outdoor::Nonce nonce{};
+    esp_fill_random(nonce.data(), nonce.size());
+    return nonce;
+  }
 };
 struct Fixture {
   HomeKeyStore store; door::NfcAttemptLimiter attempts; HomeKeyManager manager{store,attempts};
@@ -48,6 +54,7 @@ struct Fixture {
     fakeRadioStarts=fakeProfileRuns=0;fakeCredentialValid=true;fakeProfileStalls=false;fakeDelayHook={};fakeVerificationHook={};fakeProvisionHook={};
     fakeProvisionReply={1,1,0};fakeStationMac=credentials::indoorMac;
     outdoor::fakeLanIncoming.clear();outdoor::fakeLanSend={};
+    fakeQueueReceiveHook={};
     nvsRecord.clear();nvsPending.clear();nvsWrites=0;
     nvsOpenFails=nvsReadFails=nvsWriteFails=nvsCommitFails=nvsCorruptReadback=false;
     attempts.begin();CHECK(manager.begin());
@@ -84,27 +91,27 @@ struct Fixture {
   }
 };
 void verified_results_are_single_use_and_expire() {
-  {Fixture f;f.tap();CHECK(fakeProfileRuns==1);CHECK(f.reader.exchanges==2);CHECK(f.manager.takeVerified(fakeMillis));CHECK(!f.manager.takeVerified(fakeMillis));}
-  {Fixture f;f.tap();CHECK(!f.manager.takeVerified(fakeMillis+250));CHECK(!f.manager.takeVerified(fakeMillis));}
-  {Fixture f;f.tap();CHECK(f.manager.takeVerified(fakeMillis+249));}
-  {Fixture f;f.tap();f.manager.enabled(false);f.manager.enabled(true);CHECK(!f.manager.takeVerified(fakeMillis));}
-  {Fixture f;f.tap();f.store.save();CHECK(!f.manager.takeVerified(fakeMillis));}
-  {Fixture f;f.tap();WiFi.connected=false;CHECK(!f.manager.takeVerified(fakeMillis));f.manager.poll();CHECK(!f.manager.connected());}
-  {Fixture f;f.tap();f.tap();CHECK(!f.manager.takeVerified(fakeMillis));f.tap();CHECK(f.manager.takeVerified(fakeMillis));}
+  {Fixture f;f.tap();CHECK(fakeProfileRuns==1);CHECK(f.reader.exchanges==2);CHECK(f.manager.takeVerified());CHECK(!f.manager.takeVerified());}
+  {Fixture f;f.tap();fakeMillis+=250;CHECK(!f.manager.takeVerified());CHECK(!f.manager.takeVerified());}
+  {Fixture f;f.tap();fakeMillis+=249;CHECK(f.manager.takeVerified());}
+  {Fixture f;f.tap();f.manager.enabled(false);f.manager.enabled(true);CHECK(!f.manager.takeVerified());}
+  {Fixture f;f.tap();f.store.save();CHECK(!f.manager.takeVerified());}
+  {Fixture f;f.tap();WiFi.connected=false;CHECK(!f.manager.takeVerified());f.manager.poll();CHECK(!f.manager.connected());}
+  {Fixture f;f.tap();f.tap();CHECK(!f.manager.takeVerified());f.tap();CHECK(f.manager.takeVerified());}
 }
 void wifi_takes_priority_and_completes_one_tap() {
   Fixture f(true);
   CHECK(std::string(f.manager.transport()) == "wifi");
   f.tap();
   CHECK(f.reader.exchanges == 2);
-  CHECK(f.manager.takeVerified(fakeMillis));
-  CHECK(!f.manager.takeVerified(fakeMillis));
+  CHECK(f.manager.takeVerified());
+  CHECK(!f.manager.takeVerified());
   const outdoor::Frame lastWifiFrame = f.output.last;
   f.output.overWifi = false;
   f.output.send(lastWifiFrame);
   f.manager.poll();
   CHECK(f.manager.connected());
-  CHECK(!f.manager.takeVerified(fakeMillis));
+  CHECK(!f.manager.takeVerified());
 
   fakeMillis += door::IndoorSession::kLeaseMs;
   outdoor::fakeLanIncoming.clear();
@@ -117,22 +124,22 @@ void wifi_takes_priority_and_completes_one_tap() {
   CHECK(std::string(f.manager.transport()) == "esp-now");
 }
 void invalid_and_aborted_attempts_are_separate() {
-  {Fixture f;fakeCredentialValid=false;f.tap();CHECK(!f.manager.takeVerified(fakeMillis));CHECK(f.attempts.failures(fakeMillis)==1);
+  {Fixture f;fakeCredentialValid=false;f.tap();CHECK(!f.manager.takeVerified());CHECK(f.attempts.failures(fakeMillis)==1);
     f.output.send(f.output.last);f.manager.poll();CHECK(f.attempts.failures(fakeMillis)==1);}
-  {Fixture f;f.reader.fail=true;f.tap();CHECK(!f.manager.takeVerified(fakeMillis));CHECK(f.attempts.failures(fakeMillis)==0);}
-  {Fixture f;fakeVerificationHook=[&]{f.manager.enabled(false);};f.tap();CHECK(!f.manager.takeVerified(fakeMillis));CHECK(f.attempts.failures(fakeMillis)==0);}
-  {Fixture f;fakeDelayHook=[&]{f.manager.enabled(false);};f.tap();CHECK(!f.manager.takeVerified(fakeMillis));CHECK(f.attempts.failures(fakeMillis)==0);}
-  {Fixture f;fakeVerificationHook=[&]{nvsWriteFails=true;f.store.save();};f.tap();CHECK(!f.manager.takeVerified(fakeMillis));CHECK(f.attempts.failures(fakeMillis)==0);}
-  {Fixture f;fakeProfileStalls=true;f.tap();CHECK(fakeProfileRuns==8);CHECK(!f.manager.takeVerified(fakeMillis));}
+  {Fixture f;f.reader.fail=true;f.tap();CHECK(!f.manager.takeVerified());CHECK(f.attempts.failures(fakeMillis)==0);}
+  {Fixture f;fakeVerificationHook=[&]{f.manager.enabled(false);};f.tap();CHECK(!f.manager.takeVerified());CHECK(f.attempts.failures(fakeMillis)==0);}
+  {Fixture f;fakeDelayHook=[&]{f.manager.enabled(false);};f.tap();CHECK(!f.manager.takeVerified());CHECK(f.attempts.failures(fakeMillis)==0);}
+  {Fixture f;fakeVerificationHook=[&]{nvsWriteFails=true;f.store.save();};f.tap();CHECK(!f.manager.takeVerified());CHECK(f.attempts.failures(fakeMillis)==0);}
+  {Fixture f;fakeProfileStalls=true;f.tap();CHECK(fakeProfileRuns==8);CHECK(!f.manager.takeVerified());}
   {Fixture f;f.attempts.begin(1,60);fakeCredentialValid=false;f.tap();CHECK(f.attempts.locked(fakeMillis));
     const int runs=fakeProfileRuns;f.tap();CHECK(fakeProfileRuns==runs);CHECK(f.attempts.failures(fakeMillis)==1);}
 }
 void tag_before_ping_ack_is_not_discarded() {
-  Fixture f;fakeMillis=1000;f.manager.poll();
+  Fixture f;f.output.dropPingAcks=true;fakeMillis=1000;f.manager.poll();
+  f.manager.poll();
   f.outside.presence(fakeMillis,false);fakeMillis+=500;f.outside.presence(fakeMillis,false);
   const uint8_t uid[]{1,2,3,4};CHECK(f.outside.detected(fakeMillis,uid,sizeof(uid),{},0x20));
-  f.manager.poll();CHECK(fakeProfileRuns==0);
-  f.manager.poll();CHECK(fakeProfileRuns==1);CHECK(f.manager.takeVerified(fakeMillis));
+  f.manager.poll();CHECK(fakeProfileRuns==1);CHECK(f.manager.takeVerified());
 }
 void physical_fobs_use_fresh_paired_taps_without_home_key() {
   Fixture f(true, false);
@@ -140,14 +147,63 @@ void physical_fobs_use_fresh_paired_taps_without_home_key() {
   CHECK(!f.manager.provisioned());
   f.manager.fobAdmission(1, true);
   f.tap(0x08);
-  CHECK(f.manager.takeFob(fakeMillis, uid)); CHECK(uid.length == 4 && uid.bytes[0] == 1);
-  CHECK(!f.manager.takeFob(fakeMillis, uid));
-  f.tap(0x08); CHECK(!f.manager.takeFob(fakeMillis + 250, uid));
-  f.tap(0x08); f.manager.fobAdmission(2, true); CHECK(!f.manager.takeFob(fakeMillis, uid));
-  f.tap(0x08, 0x08); CHECK(!f.manager.takeFob(fakeMillis, uid)); // Random UID.
-  f.tap(0x20); CHECK(!f.manager.takeFob(fakeMillis, uid)); // ISO-DEP target.
-  CHECK(!f.manager.takeVerified(fakeMillis)); CHECK(f.reader.exchanges == 0);
+  CHECK(f.manager.takeFob(uid)); CHECK(uid.length == 4 && uid.bytes[0] == 1);
+  CHECK(!f.manager.takeFob(uid));
+  f.tap(0x08); fakeMillis += 250; CHECK(!f.manager.takeFob(uid));
+  f.tap(0x08); f.manager.fobAdmission(2, true); CHECK(!f.manager.takeFob(uid));
+  f.tap(0x08, 0x08); CHECK(!f.manager.takeFob(uid)); // Random UID.
+  f.tap(0x20); CHECK(!f.manager.takeFob(uid)); // ISO-DEP target.
+  CHECK(!f.manager.takeVerified()); CHECK(f.reader.exchanges == 0);
   CHECK(f.attempts.failures(fakeMillis) == 0);
+}
+void first_fob_after_idle_survives_a_lost_ping_ack() {
+  Fixture f(true, false);
+  f.manager.fobAdmission(1, true);
+  f.outside.presence(0, false);
+  f.outside.presence(500, false);
+  for (int interval = 0; interval < 10; ++interval) {
+    fakeMillis += 1000;
+    f.manager.poll(); f.manager.poll(); f.manager.poll();
+    CHECK(f.manager.connected());
+  }
+  f.output.dropPingAcks = true;
+  fakeMillis += 1000;
+  f.manager.poll(); f.manager.poll();
+  const auto pingAck = f.output.last;
+  CHECK(pingAck.type == outdoor::Type::Ack && !pingAck.tap);
+  fakeMillis += 50;
+  const uint8_t uid[]{1, 2, 3, 4};
+  CHECK(f.outside.detected(fakeMillis, uid, sizeof(uid), {}, 0x08));
+  const auto tag = f.output.last;
+  f.manager.poll();
+  door::RfidUid received;
+  CHECK(f.manager.takeFob(received));
+  CHECK(received.length == sizeof(uid) && std::equal(std::begin(uid), std::end(uid), received.bytes.begin()));
+  f.output.dropPingAcks = false;
+  f.output.send(pingAck); f.output.send(tag);
+  f.manager.poll(); f.manager.poll();
+  CHECK(f.manager.connected()); CHECK(!f.outside.active());
+  CHECK(!f.manager.takeFob(received));
+}
+void fob_age_is_checked_after_dequeuing() {
+  Fixture f(true, false);
+  f.manager.fobAdmission(1, true);
+  f.outside.presence(0, false);
+  f.outside.presence(500, false);
+  fakeMillis = 500;
+  bool submitted = false;
+  fakeQueueReceiveHook = [&](QueueHandle_t queue) {
+    if (submitted || queue != fakeQueues[2].get()) return;
+    submitted = true;
+    ++fakeMillis;
+    const uint8_t uid[]{1, 2, 3, 4};
+    CHECK(f.outside.detected(fakeMillis, uid, sizeof(uid), {}, 0x08));
+    f.manager.poll();
+  };
+  door::RfidUid received;
+  CHECK(f.manager.takeFob(received));
+  CHECK(submitted && received.length == 4);
+  fakeQueueReceiveHook = {};
 }
 void pairing_changes_revoke_pending_results() {
   Fixture f;f.tap();const uint32_t generation=f.store.generation();
@@ -157,7 +213,7 @@ void pairing_changes_revoke_pending_results() {
   std::thread owner([&]{std::unique_lock<std::mutex> lock(f.store.mutex);locked.set_value();released.wait();});
   locked.get_future().wait();syncHomeKeyControllers(f.store);CHECK(homeKeyControllersPending);
   release.set_value();owner.join();syncHomeKeyControllers(f.store);
-  CHECK(!homeKeyControllersPending);CHECK(!f.store.provisioned());CHECK(!f.manager.takeVerified(fakeMillis));
+  CHECK(!homeKeyControllersPending);CHECK(!f.store.provisioned());CHECK(!f.manager.takeVerified());
   f.manager.poll();CHECK(!f.manager.connected());
 }
 void provisioning_is_bounded_and_storage_failure_is_closed() {
@@ -165,7 +221,7 @@ void provisioning_is_bounded_and_storage_failure_is_closed() {
   CHECK(!access.update());access.point->input.assign(2049,1);CHECK(!access.update());
   access.point->input={1,1,0};CHECK(access.update());CHECK(!access.point->response.empty());
   access.point->pending=true;fakeProvisionHook=[](ddk::CredentialStore& store){store.save();};nvsWriteFails=true;
-  CHECK(!access.update());CHECK(!f.store.healthy());CHECK(!f.manager.takeVerified(fakeMillis));
+  CHECK(!access.update());CHECK(!f.store.healthy());CHECK(!f.manager.takeVerified());
 }
 void reader_key_query_before_provisioning_returns_empty_tlv() {
   Fixture f;
@@ -205,6 +261,8 @@ void initialization_and_traffic_failures() {
   {HomeKeyManager manager(store,attempts);CHECK(manager.begin());fakeRadioFailure=true;CHECK(manager.poll()==0);CHECK(!manager.configured());fakeRadioFailure=false;}
 }
 int main() {
+  first_fob_after_idle_survives_a_lost_ping_ack();
+  fob_age_is_checked_after_dequeuing();
   verified_results_are_single_use_and_expire();wifi_takes_priority_and_completes_one_tap();invalid_and_aborted_attempts_are_separate();tag_before_ping_ack_is_not_discarded();pairing_changes_revoke_pending_results();
   provisioning_is_bounded_and_storage_failure_is_closed();reader_key_query_before_provisioning_returns_empty_tlv();initialization_and_traffic_failures();
   physical_fobs_use_fresh_paired_taps_without_home_key();

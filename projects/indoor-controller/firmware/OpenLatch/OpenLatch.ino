@@ -275,6 +275,7 @@ void setup() {
   if (esp_read_mac(stationMac, ESP_MAC_WIFI_STA) == ESP_OK)
     Serial.printf("nfc_station_mac: %02X:%02X:%02X:%02X:%02X:%02X\n", stationMac[0], stationMac[1], stationMac[2], stationMac[3], stationMac[4], stationMac[5]);
   homeKey.begin();
+  if (homeKey.configured()) setupPortal.keepWifiAwake();
   if (!hardwareReady || !settingsReady || !settings.ssid[0]) {
     Serial.println("HomeKit not started. Configure Wi-Fi using the setup page and restart.");
     return;
@@ -341,9 +342,9 @@ void loop() {
   if (homekitStarted) syncHomeKeyControllers(homeKeyStore);
   // A setting/learning action in this iteration revokes pending NFC results.
   const bool nfcAllowed = syncNfc();
-  if (!homeKeyControllersPending && homeKey.takeVerified(millis()) && nfcAllowed) releaseFromNfc("homekey");
+  if (!homeKeyControllersPending && homeKey.takeVerified() && nfcAllowed) releaseFromNfc("homekey");
   door::RfidUid uid;
-  if (homeKey.takeFob(millis(), uid)) {
+  if (homeKey.takeFob(uid)) {
     if (setupPortal.receiveFob(millis(), uid) && nfcAllowed) releaseFromNfc("rfid");
     syncInfrared();
   }
