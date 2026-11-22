@@ -12,4 +12,8 @@ inline bool retryablePnRfError(const uint8_t* data, size_t length) {
   // PN532 UM0701-02 §7.1. Only complete, unflagged status replies qualify.
   return data && length == 2 && data[0] == 0x41 && (data[1] == 0x01 || data[1] == 0x0b);
 }
+inline bool completedEcpBroadcast(const uint8_t* data, size_t length) {
+  // An ECP broadcast normally receives no reply, reported as PN532 status 0x01.
+  return data && length >= 2 && data[0] == 0x43 && (data[1] == 0 || (data[1] == 0x01 && length == 2));
+}
 }

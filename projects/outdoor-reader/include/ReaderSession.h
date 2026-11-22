@@ -11,6 +11,7 @@ struct Reader {
   virtual bool configure(const std::array<uint8_t, 8>& group) = 0;
   virtual ExchangeResult exchange(const uint8_t* command, size_t length, uint8_t* response, size_t& size) = 0;
   virtual void release() = 0;
+  virtual void endTap(bool) { release(); }
   virtual bool restartField() { return false; }
 };
 struct Output {
@@ -142,7 +143,7 @@ class ReaderSession {
  private:
   enum class Retry { None, Pending, Probing };
   static constexpr uint8_t kIsoDep = 0x20;
-  static constexpr uint32_t kRfRetryMs = 600;
+  static constexpr uint32_t kRfRetryMs = 1200;
   static uint32_t elapsed(uint32_t now, uint32_t since) { return now - since; }
   Frame make(Type type) {
     Frame f;
@@ -152,12 +153,12 @@ class ReaderSession {
     return f;
   }
   void endTap(uint32_t now) {
-    reader_.release(); active_ = false;
+    reader_.endTap((tag_.payload[tag_.length - 1] & kIsoDep) != 0); active_ = false;
     retry_ = Retry::None;
     rearming_ = true; quiet_ = false; quietAt_ = now;
   }
   void reset(uint32_t now) {
-    if (active_) reader_.release();
+    if (active_) reader_.endTap((tag_.payload[tag_.length - 1] & kIsoDep) != 0);
     outdoor_ = output_.randomNonce(); indoor_ = {};
     bound_ = active_ = cached_ = false;
     retried_ = false; retry_ = Retry::None;

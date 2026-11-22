@@ -3,6 +3,7 @@
 #include <functional>
 #include <memory>
 #include <vector>
+inline int fakeHomeKeySessions=0;
 namespace ddk {
 using ApduCommand=std::vector<uint8_t>;
 struct ApduResponse{std::vector<uint8_t> data;bool accepted=false;bool ok()const{return accepted;}};
@@ -20,7 +21,7 @@ class NfcChannel{
  private:Callback callback_;
 };
 class Session{
- public:Session(std::shared_ptr<NfcChannel> channel,CredentialStore& store):channel(channel),store(store){}
+ public:Session(std::shared_ptr<NfcChannel> channel,CredentialStore& store):channel(channel),store(store){++fakeHomeKeySessions;}
  std::shared_ptr<NfcChannel> channel;CredentialStore& store;
 };
 enum class FlowState{Selected,Done,Failed};

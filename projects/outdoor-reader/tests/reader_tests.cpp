@@ -42,7 +42,7 @@ struct Hmac : Auth {
   }
 };
 struct FakeReader : Reader {
-  int configurations = 0, exchanges = 0, releases = 0, fieldRestarts = 0;
+  int configurations = 0, exchanges = 0, releases = 0, fieldRestarts = 0, isoDepEnds = 0;
   bool available = true;
   ExchangeResult exchangeResult = ExchangeResult::Ok;
   size_t responseLength = 2;
@@ -55,6 +55,7 @@ struct FakeReader : Reader {
     capacity = responseLength; return ExchangeResult::Ok;
   }
   void release() override { ++releases; }
+  void endTap(bool isoDep) override { release(); if (isoDep) ++isoDepEnds; }
   bool restartField() override { ++fieldRestarts; return true; }
 };
 struct Sink : Output {
@@ -242,6 +243,11 @@ void faultsAndHardDeadline() {
   raw[1] = 0x40; CHECK(!validPnResponse(raw, sizeof(raw), 2));
   CHECK(!retryablePnRfError(raw, 2));
   raw[1] = 0; raw[0] = 0x43; CHECK(!validPnResponse(raw, sizeof(raw), 2));
+  CHECK(completedEcpBroadcast(raw, 2));
+  raw[1] = 1; CHECK(completedEcpBroadcast(raw, 2));
+  CHECK(!completedEcpBroadcast(raw, 1)); CHECK(!completedEcpBroadcast(raw, sizeof(raw)));
+  raw[1] = 0x0b; CHECK(!completedEcpBroadcast(raw, 2));
+  raw[0] = 0x41; raw[1] = 1; CHECK(!completedEcpBroadcast(raw, 2));
   std::cout << "PASS: lease/tap deadlines across clock wrap, removal gate, reader failures, old-epoch rejection and ECP CRC-A.\n";
 }
 void channelScanning() {
@@ -273,6 +279,7 @@ void rfTimeoutRetriesOneFreshTap() {
   f.session.receive(600, originalCommand);
   CHECK(f.sink.sent.back().code == Code::ReaderError);
   CHECK(!f.session.active() && f.session.bound());
+  CHECK(f.reader.isoDepEnds == 1);
   CHECK(f.session.prepareRetry(610)); CHECK(f.session.prepareRetry(700));
   CHECK(f.reader.fieldRestarts == 1);
   const uint8_t uid[]{1, 2, 3, 4};
@@ -295,8 +302,8 @@ void rfTimeoutRetriesOneFreshTap() {
   expired.reader.exchangeResult = ExchangeResult::RetryableRfError;
   expired.session.receive(600, expired.command());
   CHECK(expired.session.prepareRetry(610));
-  CHECK(!expired.session.prepareRetry(1210));
-  CHECK(!expired.session.detected(1210, uid, sizeof uid, {}, 0x20));
+  CHECK(!expired.session.prepareRetry(1810));
+  CHECK(!expired.session.detected(1810, uid, sizeof uid, {}, 0x20));
   CHECK(expired.reader.fieldRestarts == 1);
   std::cout << "PASS: an ISO-DEP timeout permits one fresh tap and preserves replay and removal checks.\n";
 }

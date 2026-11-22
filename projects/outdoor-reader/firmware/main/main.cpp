@@ -43,6 +43,7 @@ namespace {
 using namespace outdoor;
 constexpr const char* kLog = "Outdoor";
 constexpr uint32_t kJoinMs = 8000, kLanProbeMs = 3500, kWifiLossMs = 1000, kWifiRetryMs = 30000;
+constexpr uint32_t kPresenceProbeMs = 60;
 uint32_t nowMs() { return uint32_t(esp_timer_get_time() / 1000); }
 static_assert(kMaxWireSize <= ESP_NOW_MAX_DATA_LEN_V2, "ESP-NOW v2 is required");
 
@@ -209,7 +210,7 @@ extern "C" void app_main() {
   static Wire incomingWifi{};
   session.begin(nowMs());
   ChannelScan scan(credentials::channels);
-  uint32_t tapStartedAt = 0;
+  uint32_t tapStartedAt = 0, presenceAt = 0;
   Link link = joinWifi() ? Link::None : Link::EspNow;
   radio.route(link);
   uint32_t modeAt = nowMs(), wifiAttemptAt = modeAt, lastHelloAt = modeAt - 500;
@@ -331,19 +332,23 @@ extern "C" void app_main() {
         healthAt = now;
         if (!pn.healthy()) { session.begin(nowMs()); continue; }
       }
-      // Only advertise Home Key when ready to handle a new tap.
       const bool retry = session.prepareRetry(now);
       const bool waitingForRemoval = session.rearming() && !retry;
-      const bool present = pn.poll(uid, atqa, sak, !waitingForRemoval);
-      if (waitingForRemoval) {
-        session.presence(nowMs(), present);
-        if (present) pn.release();
-      } else if (present) {
-        tapStartedAt = nowMs();
-        if (session.detected(tapStartedAt, uid.data(), uid.size(), atqa, sak)) {
-          if (retry) ESP_LOGI(kLog, "Reader tap restarted after RF error");
-          else tapLed.flash();
-        } else pn.release();
+      // Keep Home Key ECP on removal probes too. A burst of bare NFC-A polls
+      // can make an iPhone present its default payment card.
+      if (!waitingForRemoval || uint32_t(now - presenceAt) >= kPresenceProbeMs) {
+        const auto present = pn.poll(uid, atqa, sak);
+        if (waitingForRemoval && present.has_value()) {
+          presenceAt = nowMs();
+          session.presence(presenceAt, *present);
+          if (*present) pn.release();
+        } else if (!waitingForRemoval && present.value_or(false)) {
+          tapStartedAt = nowMs();
+          if (session.detected(tapStartedAt, uid.data(), uid.size(), atqa, sak)) {
+            if (retry) ESP_LOGI(kLog, "Reader tap restarted after RF error");
+            else tapLed.flash();
+          } else pn.release();
+        }
       }
     }
     vTaskDelay(pdMS_TO_TICKS(session.active() ? 1 : 5));

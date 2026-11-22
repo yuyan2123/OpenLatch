@@ -165,6 +165,16 @@ class HomeKeyManager {
     }
     response.assign(response_.payload.begin(), response_.payload.begin() + response_.length); return true;
   }
+  const std::shared_ptr<Channel>& apduChannel() {
+    if (!channel_) channel_ = std::make_shared<Channel>([this](auto& command, auto& response) { return exchange(command, response); });
+    return channel_;
+  }
+  void prepareAuthentication() {
+    if (prepared_ || !enabled_ || !provisioned_ || !session_.bound() || session_.active() || session_.waiting()) return;
+    std::unique_lock<std::mutex> lock(store_.mutex, std::try_to_lock);
+    if (lock && store_.provisioned() && generation_ == store_.generation())
+      prepared_ = std::make_unique<ddk::Session>(apduChannel(), store_);
+  }
   void authenticate() {
     const auto attempt = attempts_.start(millis());
     if (!attempt) {
@@ -177,28 +187,31 @@ class HomeKeyManager {
       session_.release(millis()); return;
     }
     transportError_ = false; attemptAdmission_ = admission_;
-    auto channel = std::make_shared<Channel>([this](auto& command, auto& response) { return exchange(command, response); });
+    auto authSession = std::move(prepared_);
+    if (generation_ != store_.generation()) authSession.reset();
+    const auto& channel = apduChannel();
     // SELECT and all cryptographic challenge/response validation run indoors.
     const std::vector<uint8_t> select{0x00,0xa4,0x04,0x00,0x07,0xa0,0x00,0x00,0x08,0x58,0x01,0x01,0x00};
     bool authorized = false;
     auto selected = channel->transceive(select);
     if (selected.ok()) {
-      ddk::Session authSession(channel, store_);
+      if (!authSession) authSession = std::make_unique<ddk::Session>(channel, store_);
       auto profile = ddk::homekey::make_profile();
-      if (profile->validate_select(authSession, selected.data) == ddk::FailureReason::None) {
+      if (profile->validate_select(*authSession, selected.data) == ddk::FailureReason::None) {
         auto state = ddk::FlowState::Selected;
         for (int budget = 0; budget < 8 && state != ddk::FlowState::Done && state != ddk::FlowState::Failed; ++budget)
-          state = profile->step(authSession, state);
-        const auto outcome = profile->finalize(authSession);
+          state = profile->step(*authSession, state);
+        const auto outcome = profile->finalize(*authSession);
         authorized = state == ddk::FlowState::Done && bool(outcome) && outcome.issuer && outcome.endpoint && store_.healthy();
       }
     }
-    const auto verdict = transportError_ || !store_.healthy() || !enabled_ || admission_ != attemptAdmission_ ? door::NfcAttemptLimiter::Verdict::Aborted :
+    const auto verdict = transportError_ || !selected.ok() || !store_.healthy() || !enabled_ || admission_ != attemptAdmission_ ? door::NfcAttemptLimiter::Verdict::Aborted :
         authorized ? door::NfcAttemptLimiter::Verdict::Authorized : door::NfcAttemptLimiter::Verdict::InvalidCredential;
     if (attempts_.complete(millis(), attempt, verdict) && session_.active()) {
       Verified result{millis(), store_.generation(), attemptAdmission_};
       (void)xQueueSend(verified_, &result, 0);
     } else if (transportError_) Serial.println("nfc_homekey: APDU exchange failed");
+    else if (!selected.ok()) Serial.println("nfc_homekey: Home Key applet not selected");
     else if (verdict == door::NfcAttemptLimiter::Verdict::InvalidCredential) Serial.println("nfc_homekey: credential rejected");
     session_.release(millis());
   }
@@ -207,6 +220,7 @@ class HomeKeyManager {
   uint32_t poll() {
     if (WiFi.status() != WL_CONNECTED) {
       if (lanListening_) { lan_.stop(); lanListening_ = false; }
+      prepared_.reset();
       session_.reset(); connectedLink_ = outdoor::Link::None;
       return 50;
     }
@@ -219,6 +233,7 @@ class HomeKeyManager {
       if (!lock) return 5;
       provisioned_ = store_.provisioned();
       if (!provisioned_ || store_.generation() != generation_) {
+        prepared_.reset();
         // A zero group keeps the paired reader available before Apple Home setup.
         std::array<uint8_t,8> group{};
         if (provisioned_) {
@@ -244,6 +259,7 @@ class HomeKeyManager {
         session_.release(millis());
       }
     } else if (uint32_t(millis() - pingAt_) >= 1000 && session_.ping(millis())) pingAt_ = millis();
+    else prepareAuthentication();
     return 5;
   }
  private:
@@ -254,6 +270,9 @@ class HomeKeyManager {
   }
   inline static HomeKeyManager* instance_ = nullptr;
   HomeKeyStore& store_; door::NfcAttemptLimiter& attempts_;
+  std::shared_ptr<Channel> channel_;
+  // Idle preparation is consumed once and invalidated on any credential change.
+  std::unique_ptr<ddk::Session> prepared_;
   Hmac auth_; outdoor::Codec codec_; door::IndoorSession session_;
   outdoor::LanTransport lan_{credentials::hmacKey, true};
   outdoor::LanPeer lanPeer_{};

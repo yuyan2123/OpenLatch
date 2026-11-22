@@ -2,12 +2,17 @@
 #include "Ecp.h"
 #include "PnResponse.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
 #include <algorithm>
 
 namespace outdoor {
+namespace {
+constexpr uint32_t kBetweenIsoDepTapsMs = 800, kRetryFieldOffMs = 350;
+uint32_t clockMs() { return uint32_t(esp_timer_get_time() / 1000); }
+}
 // ECP is a broadcast. A 6.4 ms RF timeout and zero retries let the PN532 finish
 // it before passive polling, without a host abort. ISO-DEP uses the target's FWT.
 bool PnReader::configure(const std::array<uint8_t, 8>& group) {
@@ -29,6 +34,7 @@ bool PnReader::configure(const std::array<uint8_t, 8>& group) {
     return false;
   }
   ready_ = true;
+  fieldPaused_ = false;
   ESP_LOGI("PN532", "Reader ready");
   return true;
 }
@@ -50,24 +56,51 @@ ExchangeResult PnReader::exchange(const uint8_t* command, size_t length, uint8_t
 void PnReader::release() {
   if (ready_) { (void)frontend_->InRelease(1); (void)frontend_->setPassiveActivationRetries(0); }
 }
-bool PnReader::restartField() {
-  if (!ready_ || frontend_->RFConfiguration(0x01, {0x02}) != pn532::Status::SUCCESS) return false;
-  vTaskDelay(pdMS_TO_TICKS(50));
-  if (frontend_->RFConfiguration(0x01, {0x03}) != pn532::Status::SUCCESS) {
-    ready_ = false;
-    return false;
+void PnReader::endTap(bool isoDep) {
+  release();
+  if (isoDep) (void)pauseField(kBetweenIsoDepTapsMs);
+}
+bool PnReader::pauseField(uint32_t duration) {
+  if (!ready_) return false;
+  if (!fieldPaused_) {
+    if (frontend_->RFConfiguration(0x01, {0x02}) != pn532::Status::SUCCESS) return false;
+    fieldOffAt_ = clockMs();
+    fieldPaused_ = true;
   }
-  vTaskDelay(pdMS_TO_TICKS(5));
+  fieldPauseMs_ = duration;
   return true;
 }
-bool PnReader::poll(std::vector<uint8_t>& uid, std::array<uint8_t, 2>& atqa, uint8_t& sak, bool announce) {
-  if (!ready_) return false;
-  if (announce) {
-    std::vector<uint8_t> ignored;
-    (void)frontend_->InCommunicateThru(ecp_, ignored, 50);
+bool PnReader::restartField() {
+  return pauseField(kRetryFieldOffMs);
+}
+std::optional<bool> PnReader::poll(std::vector<uint8_t>& uid, std::array<uint8_t, 2>& atqa, uint8_t& sak) {
+  if (!ready_) return std::nullopt;
+  using pn532::Status;
+  if (fieldPaused_) {
+    if (uint32_t(clockMs() - fieldOffAt_) < fieldPauseMs_) return std::nullopt;
+    if (frontend_->RFConfiguration(0x01, {0x03}) != Status::SUCCESS) {
+      ready_ = false;
+      return std::nullopt;
+    }
+    fieldPaused_ = false;
+    vTaskDelay(pdMS_TO_TICKS(5));
   }
+  // Passive activation can leave short-frame framing or transmit CRC enabled.
+  // The ECP payload already contains CRC-A. Send it as full NFC-A bytes at 106 kbit/s.
+  std::vector<uint8_t> result;
+  if (frontend_->WriteRegister({0x63, 0x02, 0, 0x63, 0x3d, 0}) != Status::SUCCESS ||
+      frontend_->InCommunicateThru(ecp_, result, 50) != Status::SUCCESS ||
+      !completedEcpBroadcast(result.data(), result.size())) {
+    if (!ecpErrorReported_) ESP_LOGW("PN532", "ECP broadcast failed; passive polling deferred");
+    ecpErrorReported_ = true;
+    return std::nullopt;
+  }
+  ecpErrorReported_ = false;
   uid.clear();
-  return frontend_->InListPassiveTarget(0x00, uid, atqa, sak, 50) == pn532::Status::SUCCESS;
+  const auto status = frontend_->InListPassiveTarget(0x00, uid, atqa, sak, 50);
+  if (status == Status::SUCCESS) return true;
+  if (status == Status::NO_TAGS_FOUND) return false;
+  return std::nullopt;
 }
 bool PnReader::healthy() {
   if (!ready_) return false;

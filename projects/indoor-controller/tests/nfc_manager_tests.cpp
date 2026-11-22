@@ -18,12 +18,15 @@ struct TestAuth : outdoor::Auth {
 struct TestReader : outdoor::Reader {
   int exchanges = 0; bool fail = false;
   bool rfTimeout = false;
+  bool applePayInstead = false;
   bool configure(const std::array<uint8_t,8>&) override { return true; }
-  outdoor::ExchangeResult exchange(const uint8_t*,size_t,uint8_t* response,size_t& size) override {
+  outdoor::ExchangeResult exchange(const uint8_t* command,size_t,uint8_t* response,size_t& size) override {
     ++exchanges;
     if (rfTimeout) return outdoor::ExchangeResult::RetryableRfError;
     if (fail) return outdoor::ExchangeResult::Failed;
-    response[0]=0x90;response[1]=0;size=2;return outdoor::ExchangeResult::Ok;
+    if (command[1] == 0xa4 && applePayInstead) { response[0]=0x6a; response[1]=0x82; }
+    else { response[0]=0x90; response[1]=0; }
+    size=2;return outdoor::ExchangeResult::Ok;
   }
   void release() override {}
   bool restartField() override { return true; }
@@ -57,6 +60,7 @@ struct Fixture {
     fakeMillis=0;WiFi={};WiFi.connected=true;fakeQueues.clear();fakeReceive=nullptr;
     fakeQueueFailure=fakeTaskFailure=fakeRadioFailure=fakeSendFailure=fakeShaFailure=false;
     fakeRadioStarts=fakeProfileRuns=0;fakeCredentialValid=true;fakeProfileStalls=false;fakeDelayHook={};fakeVerificationHook={};fakeProvisionHook={};
+    fakeHomeKeySessions=0;
     fakeProvisionReply={1,1,0};fakeStationMac=credentials::indoorMac;
     outdoor::fakeLanIncoming.clear();outdoor::fakeLanSend={};
     fakeQueueReceiveHook={};
@@ -238,6 +242,27 @@ void rf_timeout_recovers_with_fresh_home_key_verification() {
   CHECK(f.manager.takeVerified()); CHECK(!f.manager.takeVerified());
   CHECK(f.attempts.failures(fakeMillis) == 0);
 }
+void idle_preparation_is_consumed_once_and_refreshed_after_changes() {
+  Fixture f(true);
+  CHECK(fakeHomeKeySessions == 1);
+  f.tap(); CHECK(f.manager.takeVerified());
+  CHECK(fakeHomeKeySessions == 1);
+  f.manager.poll(); CHECK(fakeHomeKeySessions == 2);
+  f.store.save();
+  f.manager.poll(); CHECK(fakeHomeKeySessions == 3);
+  f.tap(); CHECK(f.manager.takeVerified());
+  CHECK(fakeHomeKeySessions == 3);
+}
+void missing_home_key_applet_does_not_lock_out_home_key() {
+  Fixture f(true);
+  f.attempts.begin(1, 60);
+  f.reader.applePayInstead = true;
+  f.tap(); CHECK(!f.manager.takeVerified());
+  CHECK(f.reader.exchanges == 1 && fakeProfileRuns == 0);
+  CHECK(f.attempts.failures(fakeMillis) == 0);
+  f.reader.applePayInstead = false;
+  f.tap(); CHECK(f.manager.takeVerified());
+}
 void pairing_changes_revoke_pending_results() {
   Fixture f;f.tap();const uint32_t generation=f.store.generation();
   homeKeyControllersChanged();syncHomeKeyControllers(f.store);CHECK(f.store.generation()==generation);CHECK(f.store.issuers()[0].endpoints.size()==1);
@@ -294,6 +319,8 @@ void initialization_and_traffic_failures() {
   {HomeKeyManager manager(store,attempts);CHECK(manager.begin());fakeRadioFailure=true;CHECK(manager.poll()==0);CHECK(!manager.configured());fakeRadioFailure=false;}
 }
 int main() {
+  idle_preparation_is_consumed_once_and_refreshed_after_changes();
+  missing_home_key_applet_does_not_lock_out_home_key();
   rf_timeout_recovers_with_fresh_home_key_verification();
   reader_error_ends_only_the_current_home_key_tap();
   first_fob_after_idle_survives_a_lost_ping_ack();

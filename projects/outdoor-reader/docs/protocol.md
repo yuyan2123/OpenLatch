@@ -49,6 +49,7 @@ Response code=3 表示 PN532 交換失敗，payload 為空，tap 已結束。其
 
 1. 開機時門外從最小的允許頻道送 Hello。已連線的讀取器失聯時先在原頻道送 Hello，之後每 500 ms 輪巡下一個允許頻道。正確來源、HMAC 與 nonce 的 Configure 才能停止搜尋。
 2. 門內提供公開 group ID；門外產生 ECP、初始化 PN532 並回 Ack。
+   每次 NFC-A 輪詢前都先送 Home Key ECP，包含等待移卡的探測。ECP 傳送失敗時略過該次探測。
 3. 門內每秒送 Ping。租約 5 秒，只有新的有效請求續時，重送不續時。
 4. 偵測到卡片後送 Tag；第一個 Exchange／Release 前，每 150 ms 原樣重送。
 5. 門內產生 C-APDU，門外轉送並回傳完整 R-APDU；每次只允許一個未完成的 Exchange。
@@ -57,6 +58,7 @@ Response code=3 表示 PN532 交換失敗，payload 為空，tap 已結束。其
 PN532 APDU 交換逾時 500 ms。門內可先等 800 ms，再原樣重送同一 Exchange，最多重試 1 次；仍失敗則取消當次驗證。整次 tap 最長 5 秒，新 Exchange 間閒置最長 1500 ms。這些時序仍需手機／讀取器實測。等待 Exchange 時不要插入 Ping，以免覆蓋單筆快取。
 
 PN532 回報 ISO-DEP 射頻逾時（`0x01`）或射頻協定錯誤（`0x0B`）時，會結束原 tap，重開射頻場並短暫找卡一次。重新讀到的卡片使用新的 tap 編號，從頭執行門內驗證。
+ISO-DEP 交易結束後，讀卡器暫停射頻再開始新輪詢；暫停期間不計為卡片已移開。
 
 只有最後一筆、所有欄位與 payload 相同的輸入，才能重送相同回覆，不重做 NFC 指令。相同 seq 不同內容、舊 seq、跳號 request、錯誤 tap／nonce 都丟棄。門內需接受已處理的重複 Response／Tag，且不重做驗證步驟或開門。
 
