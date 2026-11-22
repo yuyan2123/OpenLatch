@@ -23,6 +23,9 @@ Fobs use a fixed UID on 13.56 MHz NFC‑A tags such as MIFARE Classic and
 Ultralight. The reader does not support 125 kHz fobs for this feature. UID-based
 fobs can be copied.
 
+Select **Rename** beside any saved infrared button or fob and save its name.
+Leave the name blank to restore the numbered label.
+
 The **Home Key** settings configure failed-attempt limits (1–20) and lockout
 time (1–3600 seconds), defaulting to 5 attempts and 60 seconds. Select **Save and
 restart** to persist the settings. Counts and timers are volatile on the indoor

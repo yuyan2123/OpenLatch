@@ -11,6 +11,7 @@ const door::IrKey other{door::IrProtocol::Nec, 0x1234, 0x46, 32};
 void resetStorage() {
   nvsRecord.clear(); nvsPending.clear(); nvsWrites = 0;
   nvsSetupIrRecord.clear(); nvsSetupIrPending.clear();
+  nvsLabels.clear(); nvsPendingLabels.clear();
   nvsOpenFails = nvsReadFails = nvsWriteFails = nvsCommitFails = nvsCorruptReadback = false;
 }
 void learn(door::Infrared& ir, uint32_t start = 0, const door::IrKey& button = key) {
@@ -245,9 +246,29 @@ void learned_key_controls_shared_relay() {
   r.network(false, false); CHECK(r.relay.high);
   r.advance(400); CHECK(!r.relay.high);
 }
+void infrared_names_are_separate_from_credentials() {
+  resetStorage(); IrStore store; door::Infrared ir(store); CHECK(ir.begin(0));
+  learn(ir);
+  CHECK(ir.displayName(0).empty());
+  const auto credential = nvsRecord;
+  door::CredentialName name;
+  const std::string text = "  客廳遙控器  ";
+  CHECK(door::CredentialName::parse(text.data(), text.size(), name));
+  CHECK(ir.rename(0, name)); CHECK(nvsRecord == credential);
+  IrStore rebootStore; door::Infrared reboot(rebootStore); CHECK(reboot.begin(0));
+  CHECK(std::string(reboot.displayName(0).c_str()) == "客廳遙控器");
+  nvsCommitFails = true;
+  CHECK(!reboot.rename(0, {})); CHECK(reboot.ready()); CHECK(reboot.contains(key));
+  CHECK(std::string(reboot.displayName(0).c_str()) == "客廳遙控器");
+  nvsCommitFails = false;
+  CHECK(reboot.remove(1000, 0));
+  learn(reboot, 1500, other);
+  CHECK(reboot.displayName(0).empty());
+}
 int main() {
   enrollment_persistence_and_forget(); holds_cancellation_and_timeout(); independent_setup_button_storage();
   multiple_buttons_and_capacity(); legacy_single_key_migration(); removal_storage_failure();
   storage_failures(); decoding_and_serial_input(); learned_key_controls_shared_relay();
+  infrared_names_are_separate_from_credentials();
   std::cout << "PASS: infrared enrollment, actual NVS adapter, repeat filtering, USB parsing and shared relay.\n";
 }

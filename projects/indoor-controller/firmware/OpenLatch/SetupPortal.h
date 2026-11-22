@@ -45,6 +45,7 @@ class SetupPortal {
     server_.on("/api/firmware", HTTP_POST, [this]() { finishFirmware(); }, [this]() { receiveFirmware(); });
     server_.on("/api/rfid/learn", HTTP_POST, [this]() { if (authorize(true)) learnFob(); });
     server_.on("/api/rfid/remove", HTTP_POST, [this]() { if (authorize(true)) removeFob(); });
+    server_.on("/api/rfid/rename", HTTP_POST, [this]() { if (authorize(true)) renameFob(); });
     server_.on("/api/rfid/cancel", HTTP_POST, [this]() {
       if (!authorize(true)) return;
       fobs_.cancel();
@@ -60,6 +61,8 @@ class SetupPortal {
     server_.on("/api/ir/learn", HTTP_POST, [this]() { if (authorize(true)) learn(); });
     server_.on("/api/ir/remove", HTTP_POST, [this]() { if (authorize(true)) removeButton(false); });
     server_.on("/api/setup-ir/remove", HTTP_POST, [this]() { if (authorize(true)) removeButton(true); });
+    server_.on("/api/ir/rename", HTTP_POST, [this]() { if (authorize(true)) renameButton(infrared_); });
+    server_.on("/api/setup-ir/rename", HTTP_POST, [this]() { if (authorize(true)) renameButton(setupInfrared_); });
     server_.on("/api/ir/cancel", HTTP_POST, [this]() {
       if (!authorize(true)) return;
       infrared_.cancel(millis());
@@ -387,23 +390,63 @@ class SetupPortal {
       first = false;
       json += String("{\"id\":") + String(slot) + ",\"protocol\":" + quoted(door::name(key.protocol));
       json += ",\"address\":" + String(key.address) + ",\"command\":" + String(key.command);
-      json += ",\"bits\":" + String(key.bits) + ",\"key\":" + quoted(fingerprint(key)) + "}";
+      json += ",\"bits\":" + String(key.bits) + ",\"key\":" + quoted(fingerprint(key));
+      json += nameField(ir.displayName(slot)) + "}";
     }
     return json + "]";
   }
+  static String nameField(const door::CredentialName& name) {
+    return name.empty() ? String() : String(",\"name\":") + quoted(name.c_str());
+  }
+  int entrySlot() {
+    const String id = server_.arg("id");
+    if (!id.length() || id.length() > 2 || !server_.hasArg("key")) return -1;
+    int slot = 0;
+    for (size_t i = 0; i < id.length(); ++i) {
+      if (id[i] < '0' || id[i] > '9') return -1;
+      slot = slot * 10 + id[i] - '0';
+    }
+    return slot;
+  }
+  bool checkButton(const door::Infrared& ir, int slot) {
+    if (slot < 0) { message(400, "Missing or invalid button ID and key."); return false; }
+    if (slot >= door::kIrMaxKeys || !ir.at(slot).valid()) { message(404, "Button no longer exists. Refresh the list."); return false; }
+    if (server_.arg("key") != fingerprint(ir.at(slot))) { message(409, "Button changed. Refresh the list and try again."); return false; }
+    return true;
+  }
+  bool checkFob(int slot) {
+    if (slot < 0) { message(400, "Missing or invalid fob ID and key."); return false; }
+    if (!fobs_.has(slot)) { message(404, "Fob no longer exists. Refresh the list."); return false; }
+    if (server_.arg("key") != String(fobs_.revision())) { message(409, "Fob list changed. Refresh and try again."); return false; }
+    return true;
+  }
+  bool readName(door::CredentialName& name) {
+    if (learning()) { message(409, "Finish or cancel learning before renaming."); return false; }
+    const String text = server_.arg("name");
+    if (!server_.hasArg("name") || !door::CredentialName::parse(text.c_str(), text.length(), name)) {
+      message(400, "Enter a shorter name using printable characters."); return false;
+    }
+    return true;
+  }
+  void renameButton(door::Infrared& ir) {
+    const int slot = entrySlot();
+    door::CredentialName name;
+    if (!readName(name) || !checkButton(ir, slot)) return;
+    const bool saved = ir.rename(slot, name);
+    message(saved ? 200 : 500, saved ? "Name saved." : "Could not save the name. Try again.");
+  }
+  void renameFob() {
+    const int slot = entrySlot();
+    door::CredentialName name;
+    if (!readName(name) || !checkFob(slot)) return;
+    const bool saved = fobs_.rename(slot, name);
+    message(saved ? 200 : 500, saved ? "Name saved." : "Could not save the name. Try again.");
+  }
   void removeButton(bool setup) {
     if (learning()) { message(409, "Finish or cancel learning before removing a button."); return; }
-    const String id = server_.arg("id");
-    if (!id.length() || id.length() > 2 || !server_.hasArg("key")) { message(400, "Missing or invalid button ID and key."); return; }
-    uint8_t slot = 0;
-    for (size_t i = 0; i < id.length(); ++i) {
-      if (id[i] < '0' || id[i] > '9') { message(400, "Invalid button ID."); return; }
-      slot = slot * 10 + uint8_t(id[i] - '0');
-    }
+    const int slot = entrySlot();
     auto& ir = setup ? setupInfrared_ : infrared_;
-    if (slot >= door::kIrMaxKeys || !ir.at(slot).valid()) { message(404, "Button no longer exists. Refresh the list."); return; }
-    // Prevent a stale browser from removing a different button in a reused slot.
-    if (server_.arg("key") != fingerprint(ir.at(slot))) { message(409, "Button changed. Refresh the list and try again."); return; }
+    if (!checkButton(ir, slot)) return;
     controller_.inhibit(millis(), true);
     relay_.permitInfrared(false);
     const bool saved = ir.remove(millis(), slot);
@@ -427,16 +470,8 @@ class SetupPortal {
   }
   void removeFob() {
     if (learning()) { message(409, "Finish or cancel learning before removing a fob."); return; }
-    const String id = server_.arg("id");
-    if (!id.length() || id.length() > 2 || !server_.hasArg("key")) { message(400, "Missing or invalid fob ID."); return; }
-    uint8_t slot = 0;
-    for (size_t i = 0; i < id.length(); ++i) {
-      if (id[i] < '0' || id[i] > '9') { message(400, "Invalid fob ID."); return; }
-      slot = slot * 10 + uint8_t(id[i] - '0');
-    }
-    if (!fobs_.has(slot)) { message(404, "Fob no longer exists. Refresh the list."); return; }
-    if (server_.arg("key") != String(fobs_.revision())) { message(409, "Fob list changed. Refresh and try again."); return; }
-    changeFobs(false, slot);
+    const int slot = entrySlot();
+    if (checkFob(slot)) changeFobs(false, slot);
   }
   void changeFobs(bool clear, uint8_t slot = 0) {
     controller_.inhibit(millis(), true);
@@ -453,7 +488,7 @@ class SetupPortal {
     for (uint8_t slot = 0; slot < door::RfidFobs::kCapacity; ++slot) {
       if (!fobs_.has(slot)) continue;
       if (json.length() > 1) json += ",";
-      json += String("{\"id\":") + String(slot) + ",\"key\":" + revision + "}";
+      json += String("{\"id\":") + String(slot) + ",\"key\":" + revision + nameField(fobs_.displayName(slot)) + "}";
     }
     return json + "]";
   }

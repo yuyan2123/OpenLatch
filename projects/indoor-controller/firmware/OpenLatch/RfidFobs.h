@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <nvs.h>
+#include "CredentialNames.h"
 
 namespace door {
 struct RfidUid {
@@ -36,6 +37,12 @@ class RfidFobs {
   bool has(uint8_t slot) const { return slot < kCapacity && entries_[slot].length != 0; }
   uint8_t count() const {
     return std::count_if(entries_.begin(), entries_.end(), [](const RfidUid& uid) { return uid.length != 0; });
+  }
+  CredentialName displayName(uint8_t slot) const {
+    return has(slot) ? CredentialNames::load(handle_, slot, identity(entries_[slot])) : CredentialName{};
+  }
+  bool rename(uint8_t slot, const CredentialName& label) {
+    return ready_ && !learning_ && has(slot) && CredentialNames::save(handle_, slot, identity(entries_[slot]), label);
   }
   bool learn(uint32_t now) {
     if (!ready_ || learning_ || count() >= kCapacity) return false;
@@ -81,6 +88,12 @@ class RfidFobs {
   // NVS checks blob integrity. Encode explicitly to keep the layout independent of C++ padding.
   using Record = std::array<uint8_t, sizeof(kHeader) + kCapacity * 11>;
 
+  static CredentialNames::Identity identity(const RfidUid& uid) {
+    CredentialNames::Identity id{uid.length};
+    std::copy(uid.bytes.begin(), uid.bytes.end(), id.begin() + 1);
+    return id;
+  }
+
   bool load() {
     entries_ = {};
     Record record{};
@@ -114,7 +127,11 @@ class RfidFobs {
     ready_ = opened_ && nvs_set_blob(handle_, "fobs", record.data(), record.size()) == ESP_OK &&
              nvs_commit(handle_) == ESP_OK && nvs_get_blob(handle_, "fobs", verified.data(), &size) == ESP_OK &&
              size == record.size() && verified == record;
-    entries_ = ready_ ? next : Entries{};
+    if (ready_) {
+      for (uint8_t slot = 0; slot < kCapacity; ++slot)
+        if (!(entries_[slot] == next[slot])) (void)CredentialNames::clear(handle_, slot);
+      entries_ = next;
+    } else entries_ = {};
     return ready_;
   }
   nvs_handle_t handle_ = 0;

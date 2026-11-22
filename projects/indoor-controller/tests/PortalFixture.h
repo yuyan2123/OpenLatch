@@ -5,9 +5,17 @@
 #define CHECK(x) do { if (!(x)) { std::cerr << __func__ << ':' << __LINE__ << " failed: " #x "\n"; std::exit(1); } } while (0)
 struct MemoryIr : door::IrStorage {
   door::IrKeys keys{};
+  std::array<door::CredentialName, door::kIrMaxKeys> labels{};
   bool failSave = false;
   door::IrLoad load(door::IrKeys& out) override { out = keys; return keys.count() ? door::IrLoad::Loaded : door::IrLoad::Empty; }
   bool save(const door::IrKeys& input) override { if (failSave) return false; keys = input; return true; }
+  door::CredentialName displayName(uint8_t slot, const door::IrKey&) const override { return labels[slot]; }
+  bool rename(uint8_t slot, const door::IrKey&, const door::CredentialName& label) override {
+    if (failSave) return false;
+    labels[slot] = label;
+    return true;
+  }
+  void clearName(uint8_t slot) override { labels[slot] = {}; }
 };
 struct Fixture {
   door::DeviceSettings settings{};
@@ -25,6 +33,7 @@ struct Fixture {
     resetOta();
     nvsRecord.clear(); nvsPending.clear(); nvsWrites = 0;
     nvsFobRecord.clear(); nvsFobPending.clear();
+    nvsLabels.clear(); nvsPendingLabels.clear();
     nvsOpenFails = nvsReadFails = nvsWriteFails = nvsCommitFails = nvsCorruptReadback = false;
     std::strcpy(settings.pairingCode, "59263814"); std::strcpy(settings.setupPassword, door::kDefaultSetupPassword);
     if (credentials) { std::strcpy(settings.ssid, "Home"); std::strcpy(settings.wifiPassword, "secretpass"); }

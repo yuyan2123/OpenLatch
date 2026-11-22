@@ -62,9 +62,10 @@ summary{cursor:pointer;min-height:44px;align-content:center;font-size:var(--text
 .button-list{list-style:none;margin:var(--space-md) 0 0;padding:0}
 .button-list:empty{display:none}
 .button-list li{display:flex;justify-content:space-between;align-items:center;gap:var(--space-sm);padding-block:var(--space-sm);border-top:1px solid var(--color-rule)}
-.button-list li>div{min-width:0}.button-list span{display:block;font-size:var(--text-sm);font-weight:500}
+.button-list li>div{min-width:0}.button-list span{display:block;font-size:var(--text-sm);font-weight:500;overflow-wrap:anywhere}
 .button-list code{display:block;font-family:var(--font-mono);font-size:var(--text-sm);color:var(--color-muted);overflow-wrap:anywhere}
-.button-list button{flex-shrink:0;font-size:var(--text-sm)}
+.entry-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:var(--space-xs)}
+.button-list button{flex-shrink:0;font-size:var(--text-sm);padding-inline:var(--space-sm)}
 .steps{margin:var(--space-sm) 0 0;padding-left:var(--space-lg);font-size:var(--text-sm);color:var(--color-muted)}.steps li+li{margin-top:var(--space-xs)}
 .pairing{margin-top:var(--space-xl);padding-top:var(--space-lg);border-top:1px solid var(--color-rule)}
 .pairing code{display:block;margin-top:var(--space-md);font-family:var(--font-mono);font-size:var(--text-section);font-variant-numeric:tabular-nums}
@@ -79,6 +80,7 @@ footer{margin-top:var(--space-xl);padding-top:var(--space-lg);border-top:1px sol
 [hidden]{display:none!important}
 dialog{width:420px;max-width:calc(100% - 2*var(--space-md));padding:var(--space-lg);border:1px solid var(--color-rule);border-radius:var(--radius-panel);background:var(--color-surface);color:var(--color-ink)}
 dialog::backdrop{background:color-mix(in srgb,var(--color-ink) 25%,transparent)}
+#rename-error{margin-top:var(--space-xs);font-size:var(--text-sm);color:var(--color-error)}
 @media(hover:hover){button:not(:disabled):hover{background:var(--color-accent-deep)}.secondary:not(:disabled):hover,.quiet:not(:disabled):hover{background:var(--color-paper-3)}.danger:not(:disabled):hover{background:var(--color-clear);text-decoration-thickness:2px}input:not(:disabled):hover{border-color:var(--color-accent)}a:hover,summary:hover{color:var(--color-accent-deep)}}
 @media(max-width:760px){.shell{padding:var(--space-lg) var(--space-md) var(--space-xl)}.masthead{display:block}.jump-links{margin-top:var(--space-sm);gap:var(--space-md)}.jump-links [role="tab"]{padding-inline:0}.connection-strip{padding:var(--space-md);gap:var(--space-sm)}.window strong{font-size:var(--text-title)}.notice{align-items:flex-start;flex-wrap:wrap}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}button:active{transform:none}}
@@ -182,6 +184,13 @@ dialog::backdrop{background:color-mix(in srgb,var(--color-ink) 25%,transparent)}
   <h3 id="unsaved-heading">Save changes?</h3>
   <div class="actions"><button id="unsaved-save" type="button">Save and restart</button><button id="unsaved-discard" class="secondary" type="button">Discard</button><button id="unsaved-cancel" class="secondary" type="button" autofocus>Cancel</button></div>
 </dialog>
+<dialog id="rename-dialog" aria-labelledby="rename-heading">
+  <form id="rename-form">
+    <h3 id="rename-heading">Rename</h3>
+    <div class="field"><label for="entry-name">Name</label><input id="entry-name" maxlength="48" autocomplete="off" autofocus aria-describedby="rename-error"><p id="rename-error" role="alert" hidden></p></div>
+    <div class="actions"><button id="rename-save" type="submit">Save</button><button id="rename-cancel" class="secondary" type="button">Cancel</button></div>
+  </form>
+</dialog>
 <script>
 "use strict";
 const byId=id=>document.getElementById(id);
@@ -192,6 +201,8 @@ let requestTail=Promise.resolve(),countdownUntil=0;
 let currentPage="wifi",pendingPage=null,savedSettings=null;
 let firmwareNotice=false;
 const pageNames=["wifi","infrared","rfid","other"],unsavedDialog=byId("unsaved-dialog");
+const renameDialog=byId("rename-dialog"),entryName=byId("entry-name");
+let renameTarget=null;
 function settingsValues(){return [byId("ssid").value,byId("wifi-password").value,byId("open-network").checked,byId("setup-password").value,byId("relay-pulse").value,byId("nfc-max-failures").value,byId("nfc-lockout-seconds").value,byId("password-required").checked]}
 function unsavedSettings(){return savedSettings!==null&&JSON.stringify(settingsValues())!==JSON.stringify(savedSettings)}
 function selectPage(name){
@@ -254,7 +265,9 @@ function controls(){
   byId("fob-learn").disabled=!ready||learning||!lastState?.hardware_ready||!lastState.fob_ready||!lastState.nfc_connected||lastState.fob_count>=lastState.fob_capacity;
   byId("fob-cancel").disabled=!ready||!lastState?.fob_learning;
   byId("fob-forget").disabled=!ready||learning||(!lastState?.fob_count&&lastState?.fob_ready!==false);
-  document.querySelectorAll("[data-remove-group]").forEach(button=>button.disabled=!ready||learning);
+  document.querySelectorAll("[data-remove-group],[data-rename]").forEach(button=>button.disabled=!ready||learning);
+  byId("rename-save").disabled=!ready||learning||Boolean(renameTarget&&renameTarget.token!==token);
+  byId("rename-cancel").disabled=busy;
   byId("unsaved-save").disabled=byId("save").disabled;
   for(const name of pageNames)byId("tab-"+name).disabled=busy;
 }
@@ -309,19 +322,27 @@ function renderButtons(buttons,listId,group){
   if(list.dataset.signature===signature)return;
   list.dataset.signature=signature;list.replaceChildren();
   for(const saved of buttons){
-    const row=document.createElement("li"),info=document.createElement("div"),label=document.createElement("span"),remove=document.createElement("button");
+    const row=document.createElement("li"),info=document.createElement("div"),label=document.createElement("span");
+    const actions=document.createElement("div"),rename=document.createElement("button"),remove=document.createElement("button");
     const fob=group==="fob";
-    label.textContent=(fob?"Fob ":"Button ")+(saved.id+1);
+    const defaultName=(fob?"Fob ":"Button ")+(saved.id+1),displayName=saved.name||defaultName;
+    label.textContent=displayName;label.dir="auto";
     info.append(label);
     if(!fob){
       const code=document.createElement("code");
       code.textContent=saved.protocol+" / "+saved.address.toString(16).toUpperCase()+" / "+saved.command.toString(16).toUpperCase()+" ("+saved.bits+" bits)";
       info.append(code);
     }
-    remove.type="button";remove.className="secondary";remove.textContent="Remove";
-    remove.setAttribute("aria-label","Remove "+(fob?"fob":group+" button")+" "+(saved.id+1));
-    remove.dataset.removeGroup=group;remove.dataset.id=saved.id;remove.dataset.key=saved.key;
-    row.append(info,remove);list.append(row);
+    actions.className="entry-actions";
+    for(const [button,action] of [[rename,"Rename"],[remove,"Remove"]]){
+      button.type="button";button.className="secondary";button.textContent=action;
+      button.setAttribute("aria-label",action+" "+(saved.name||(fob?"fob":group+" button")+" "+(saved.id+1)));
+      button.dataset.id=saved.id;button.dataset.key=saved.key;
+      button.dataset.name=saved.name??"";button.dataset.defaultName=defaultName;
+      actions.append(button);
+    }
+    rename.dataset.rename="";remove.dataset.removeGroup=group;
+    row.append(info,actions);list.append(row);
   }
 }
 function render(state){
@@ -458,10 +479,10 @@ byId("firmware-form").addEventListener("submit",async event=>{
   finally{busy=false;byId("firmware-password").value="";byId("firmware-upload").removeAttribute("aria-busy");controls();if(!restarting)scheduleRefresh(1000)}
 
 });
-async function buttonAction(button,path,body=""){
+async function buttonAction(button,path,body="",showError=reportError){
   busy=true;button.setAttribute("aria-busy","true");controls();
-  try{await request(path,body);notice("");render(await request("/api/status"))}
-  catch(error){reportError(error);if(!stopped&&!connectionFailed)try{render(await request("/api/status"))}catch(statusError){reportError(statusError)}}
+  try{await request(path,body);notice("");render(await request("/api/status"));return true}
+  catch(error){showError(error);if(!stopped&&!connectionFailed)try{render(await request("/api/status"))}catch(statusError){reportError(statusError)}return false}
   finally{busy=false;button.removeAttribute("aria-busy");controls();scheduleRefresh(connectionFailed?1000:2000)}
 }
 for(const [prefix,route,clearPrompt] of [
@@ -476,14 +497,50 @@ for(const [prefix,route,clearPrompt] of [
     await buttonAction(button,route+action);
   });
 }
-for(const [id,route,learnId] of [["ir-buttons","/api/ir/remove","learn"],["setup-ir-buttons","/api/setup-ir/remove","setup-learn"],["fob-list","/api/rfid/remove","fob-learn"]])byId(id).addEventListener("click",async event=>{
-  const button=event.target.closest("[data-remove-group]");
+function renameError(message){
+  byId("rename-error").textContent=message;
+  byId("rename-error").hidden=!message;
+  if(message)entryName.setAttribute("aria-invalid","true");else entryName.removeAttribute("aria-invalid");
+}
+function restoreRenameFocus(){
+  if(renameDialog.open||!renameTarget)return;
+  const {listId,id,learnId}=renameTarget;
+  renameTarget=null;
+  const entry=byId(listId).querySelector('[data-rename][data-id="'+id+'"]');
+  (entry||byId(learnId)).focus({preventScroll:true});
+}
+function closeRename(){renameDialog.close();restoreRenameFocus()}
+byId("rename-cancel").addEventListener("click",closeRename);
+renameDialog.addEventListener("cancel",event=>{if(busy)event.preventDefault()});
+renameDialog.addEventListener("close",restoreRenameFocus);
+entryName.addEventListener("input",()=>renameError(""));
+byId("rename-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const button=byId("rename-save");
+  if(!renameTarget||button.disabled)return;
+  const name=entryName.value.trim();
+  if(new TextEncoder().encode(name).length>48){renameError("Enter a shorter name.");entryName.focus();return}
+  const {id,key,route}=renameTarget;
+  const body=new URLSearchParams({id,key,name});
+  const saved=await buttonAction(button,route+"rename",body.toString(),error=>{
+    if(!error.status||error.status===410)reportError(error);
+    renameError(error.message);
+  });
+  if(saved)closeRename();
+});
+for(const [id,route,learnId] of [["ir-buttons","/api/ir/","learn"],["setup-ir-buttons","/api/setup-ir/","setup-learn"],["fob-list","/api/rfid/","fob-learn"]])byId(id).addEventListener("click",async event=>{
+  const button=event.target.closest("[data-remove-group],[data-rename]");
   if(!button||button.disabled||busy||stopped||!initialized)return;
+  if(button.hasAttribute("data-rename")){
+    renameTarget={listId:id,id:button.dataset.id,key:button.dataset.key,route,learnId,token};
+    entryName.value=button.dataset.name;entryName.placeholder=button.dataset.defaultName;
+    renameError("");renameDialog.showModal();entryName.select();return;
+  }
   const group=button.dataset.removeGroup;
-  if(!confirm("Remove "+(group==="fob"?"fob":group+" button")+" "+(Number(button.dataset.id)+1)+"?"))return;
+  if(!confirm("Remove "+(button.dataset.name||(group==="fob"?"fob":group+" button")+" "+(Number(button.dataset.id)+1))+"?"))return;
   const body=new URLSearchParams({id:button.dataset.id,key:button.dataset.key});
-  await buttonAction(button,route,body.toString());
-  if(!button.isConnected){const next=byId(id).querySelector("button")||byId(learnId);next.focus({preventScroll:true})}
+  await buttonAction(button,route+"remove",body.toString());
+  if(!button.isConnected){const next=byId(id).querySelector("[data-remove-group]")||byId(learnId);next.focus({preventScroll:true})}
 });
 setInterval(updateCountdown,200);
 refresh();

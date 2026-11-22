@@ -400,6 +400,55 @@ void fob_capacity_timeout_and_storage_failure() {
   f.token(); fakeWeb->request("/api/rfid/forget", HTTP_POST); CHECK(fakeWeb->code == 200);
   CHECK(f.fobs.ready()); CHECK(!f.fobs.count());
 }
+void rename_routes_validate_and_preserve_credentials() {
+  Fixture f;
+  const door::IrKey button{door::IrProtocol::Nec, 1, 2, 32};
+  f.irStore.keys.entries[0] = button;
+  f.setupIrStore.keys.entries[0] = button;
+  CHECK(f.ir.begin(0)); CHECK(f.setupIr.begin(0));
+  using Event = door::RfidFobs::Event;
+  const door::RfidUid uid{{1, 2, 3, 4}, 4};
+  CHECK(f.fobs.learn(0));
+  CHECK(f.fobs.receive(500, uid) == Event::Captured);
+  CHECK(f.fobs.receive(1000, uid) == Event::Learned);
+  const auto credential = nvsFobRecord;
+  const std::string revision = std::to_string(f.fobs.revision());
+  fakeWeb->arguments = {{"id", "0"}, {"key", "NEC:1:2:32"}, {"name", "玄關 \"A\""}};
+  fakeWeb->request("/api/ir/rename", HTTP_POST); CHECK(fakeWeb->code == 403);
+  f.token();
+  fakeWeb->request("/api/ir/rename", HTTP_POST); CHECK(fakeWeb->code == 200);
+  CHECK(f.setupIr.displayName(0).empty()); CHECK(f.ir.contains(button));
+  fakeWeb->arguments["name"] = "設定遙控器";
+  fakeWeb->request("/api/setup-ir/rename", HTTP_POST); CHECK(fakeWeb->code == 200);
+  fakeWeb->arguments["name"] = "家人的磁扣";
+  fakeWeb->request("/api/rfid/rename", HTTP_POST); CHECK(fakeWeb->code == 409);
+  fakeWeb->arguments["key"] = revision;
+  fakeWeb->arguments["id"] = "16";
+  fakeWeb->request("/api/rfid/rename", HTTP_POST); CHECK(fakeWeb->code == 404);
+  fakeWeb->arguments["id"] = "0";
+  const std::string names[] = {std::string(49, 'x'), std::string("bad\0name", 8), "\xed\xa0\x80"};
+  for (const auto& invalid : names) {
+    fakeWeb->arguments["name"] = invalid;
+    fakeWeb->request("/api/rfid/rename", HTTP_POST); CHECK(fakeWeb->code == 400);
+  }
+  fakeWeb->arguments["name"] = "家人的磁扣";
+  fakeWeb->request("/api/rfid/rename", HTTP_POST); CHECK(fakeWeb->code == 200);
+  CHECK(nvsFobRecord == credential); CHECK(revision == std::to_string(f.fobs.revision()));
+  fakeWeb->request("/api/status");
+  CHECK(fakeWeb->body.find("\"name\":\"玄關 \\\"A\\\"\"") != std::string::npos);
+  CHECK(fakeWeb->body.find("\"name\":\"設定遙控器\"") != std::string::npos);
+  CHECK(fakeWeb->body.find("\"name\":\"家人的磁扣\"") != std::string::npos);
+  door::RfidFobs reboot; CHECK(reboot.begin()); CHECK(reboot.receive(1500, uid) == Event::Matched);
+  CHECK(std::string(reboot.displayName(0).c_str()) == "家人的磁扣");
+  nvsWriteFails = true;
+  fakeWeb->arguments["name"] = "temporarily unavailable";
+  fakeWeb->request("/api/rfid/rename", HTTP_POST); CHECK(fakeWeb->code == 500);
+  CHECK(f.fobs.receive(1500, uid) == Event::Matched);
+  nvsWriteFails = false;
+  fakeWeb->arguments["name"] = "  ";
+  fakeWeb->request("/api/rfid/rename", HTTP_POST); CHECK(fakeWeb->code == 200);
+  CHECK(f.fobs.displayName(0).empty());
+}
 int main() {
   password_modes_and_old_password();
   authentication_and_request_guards(); browser_learning_and_forget();
@@ -407,6 +456,7 @@ int main() {
   setup_button_learning_and_reopening(); activity_and_status_polling();
   multiple_buttons_removal_and_conflicts(); full_button_list_is_rejected();
   fob_learning_persistence_and_removal(); fob_capacity_timeout_and_storage_failure();
+  rename_routes_validate_and_preserve_credentials();
   ota_route_guards(); ota_success_stops_all_release_sources(); ota_abort_and_verification_failure();
   std::cout << "PASS: setup authorization, IR buttons, RFID learning/storage, activity windows, AP recovery and save/restart.\n";
 }

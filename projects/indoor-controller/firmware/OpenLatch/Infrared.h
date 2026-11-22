@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "CredentialName.h"
 
 namespace door {
 constexpr uint32_t kIrQuietMs = 500;
@@ -59,6 +60,9 @@ struct IrStorage {
   virtual IrLoad load(IrKeys& keys) = 0;
   // Save the whole list atomically; empty slots must be all zero.
   virtual bool save(const IrKeys& keys) = 0;
+  virtual CredentialName displayName(uint8_t, const IrKey&) const { return {}; }
+  virtual bool rename(uint8_t, const IrKey&, const CredentialName&) { return false; }
+  virtual void clearName(uint8_t) {}
 };
 enum class IrEvent { Ignored, Captured, Mismatch, Learned, Duplicate, Matched, StorageError, TimedOut };
 inline const char* name(IrEvent event) {
@@ -146,6 +150,12 @@ class Infrared {
   bool enabled() const { return ready_ && !learning_ && count() > 0; }
   uint8_t count() const { return keys_.count(); }
   bool contains(const IrKey& input) const { return keys_.contains(input); }
+  CredentialName displayName(uint8_t slot) const {
+    return slot < kIrMaxKeys && at(slot).valid() ? storage_.displayName(slot, at(slot)) : CredentialName{};
+  }
+  bool rename(uint8_t slot, const CredentialName& label) {
+    return ready_ && !learning_ && slot < kIrMaxKeys && at(slot).valid() && storage_.rename(slot, at(slot), label);
+  }
   const IrKey& at(uint8_t slot) const { return keys_.entries[slot < kIrMaxKeys ? slot : 0]; }
   // First saved key for legacy status consumers. List APIs expose every slot.
   const IrKey& key() const {
@@ -159,8 +169,11 @@ class Infrared {
   IrKey candidate_{};
   bool persist(uint32_t now, const IrKeys& next) {
     ready_ = storage_.save(next);
-    if (ready_) keys_ = next;
-    else keys_.clear();
+    if (ready_) {
+      for (uint8_t slot = 0; slot < kIrMaxKeys; ++slot)
+        if (!(keys_.entries[slot] == next.entries[slot])) storage_.clearName(slot);
+      keys_ = next;
+    } else keys_.clear();
     cancel(now);
     return ready_;
   }

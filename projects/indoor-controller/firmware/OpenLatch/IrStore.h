@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstring>
 #include <nvs.h>
+#include "CredentialNames.h"
 #include "Infrared.h"
 
 // One versioned, checksummed NVS blob. Version 1's single key is read without
@@ -43,9 +44,22 @@ class IrStore final : public door::IrStorage {
     return nvs_get_blob(handle_, "key", verify, &length) == ESP_OK && length == kSize &&
            std::memcmp(record, verify, kSize) == 0;
   }
+  door::CredentialName displayName(uint8_t slot, const door::IrKey& key) const override {
+    return door::CredentialNames::load(handle_, slot, identity(key));
+  }
+  bool rename(uint8_t slot, const door::IrKey& key, const door::CredentialName& label) override {
+    return door::CredentialNames::save(handle_, slot, identity(key), label);
+  }
+  void clearName(uint8_t slot) override { (void)door::CredentialNames::clear(handle_, slot); }
 
  private:
   static constexpr size_t kSize = 8 + door::kIrMaxKeys * 8;
+  static door::CredentialNames::Identity identity(const door::IrKey& key) {
+    door::CredentialNames::Identity id{};
+    put16(id.data(), uint16_t(key.protocol)); put16(id.data() + 2, key.address);
+    put16(id.data() + 4, key.command); put16(id.data() + 6, key.bits);
+    return id;
+  }
   static void put16(uint8_t* out, uint16_t value) {
     out[0] = uint8_t(value); out[1] = uint8_t(value >> 8);
   }
