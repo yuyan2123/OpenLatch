@@ -6,7 +6,7 @@
 
 OpenLatch 以 ESP32-C3 驅動繼電器，輸出短暫的開門脈衝。用手機瀏覽器即可設定 Wi-Fi、學習遙控器按鍵與更新韌體；Apple Home Key 則透過門外的 ESP-32S＋PN532 轉送感應交握，由門內控制器驗證憑證。
 
-目前原始碼為 **`1.4.0-verified-ota`**，最近一次實機燒錄紀錄為 **`1.2.3-web-recovery`**。**Home Key 雙板整合與網頁 OTA 尚待實機驗證**，進度見下方[目前狀態](#目前狀態)。
+目前原始碼為 **`1.5.0`**，門內與門外共用此發行版號。雙板最近一次 USB 燒錄為 2026-11-23 的 `1.5.0`，進度見下方[目前狀態](#目前狀態)。
 
 <p align="center">
   <a href="docs/screenshots/setup-wifi.png"><img src="docs/screenshots/setup-wifi.png" width="32%" alt="手機設定頁：Wi-Fi 連線與設定熱點密碼" /></a>
@@ -107,9 +107,9 @@ python tools/test.py
 
 | 項目 | 進度 |
 | --- | --- |
-| 門內原始碼 | `1.4.0-verified-ota`；本機測試、設定頁瀏覽器檢查及韌體編譯已通過 |
-| 最近實機紀錄 | `1.2.3-web-recovery`；已燒錄並完成當次區網設定頁抽測 |
-| Home Key | 門內外程式已整合並通過本機測試與建置；待實際 MAC／金鑰配置、Apple 家庭佈建與 iPhone／Watch 雙板驗證 |
+| 門內原始碼 | `1.5.0`；本機測試、設定頁瀏覽器檢查及韌體編譯已通過 |
+| 最近實機紀錄 | 2026-11-23，兩板 USB 寫入雜湊校驗通過 |
+| Home Key | 門內外程式已整合並通過本機測試與建置；修正後的 iPhone 首次感應成功率、Watch 感應與斷線恢復時間仍待實測 |
 | OTA | 已通過本機串流驗證、介面檢查與映像建置；待實機 USB 遷移、Wi-Fi 更新與開機驗證 |
 
 詳細結果與測試邊界見[門內驗證紀錄](projects/indoor-controller/VALIDATION.md)及[門外驗證紀錄](projects/outdoor-reader/VALIDATION.md)。

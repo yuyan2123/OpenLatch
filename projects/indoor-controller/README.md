@@ -2,13 +2,13 @@
 
 本專案位於 `projects/indoor-controller/`。以下指令均從此目錄執行；若目前在 repository 根目錄，先執行 `cd projects/indoor-controller`。其他專案見 [OpenLatch](../../README.md)。
 
-目前原始碼為 **1.4.0-verified-ota**：免密碼模式下，OTA 不需密碼；啟用 **Require a password for changes and firmware updates** 後，設定修改、密碼變更／停用與 OTA 必須驗證目前的設定密碼。設定熱點仍一律使用密碼。更新會先完整驗證映像，再重啟；網頁確認新的開機識別、映像 SHA-256 與開機健康後，才顯示 **Update complete**。**舊版首次啟用必須經 USB 安裝雙 OTA 分割區**；之後才可透過網頁更新。操作、首次安裝與限制見 [OTA 更新](docs/ota_setup.md)。
+目前原始碼為 **1.5.0**：免密碼模式下，OTA 不需密碼；啟用 **Require a password for changes and firmware updates** 後，設定修改、密碼變更／停用與 OTA 必須驗證目前的設定密碼。設定熱點仍一律使用密碼。更新會先完整驗證映像，再重啟；網頁確認新的開機識別、映像 SHA-256 與開機健康後，才顯示 **Update complete**。**舊版首次啟用必須經 USB 安裝雙 OTA 分割區**；之後才可透過網頁更新。操作、首次安裝與限制見 [OTA 更新](docs/ota_setup.md)。
 
-門內 Apple Home Key 驗證、ESP-NOW 轉送接收與 HomeKit NFC 憑證佈建保留。**RFID** 分頁可設定連續錯誤次數與暫停秒數，預設 **5 次／60 秒**；有效驗證清除連續錯誤，重送不重計，讀取／通訊／儲存故障不算憑證錯誤。未配置雙板 MAC 與通訊金鑰時，NFC 保持停用。實機配置依使用者要求留待之後，操作見 [Home Key](docs/homekey_setup.md)。
+門內 Apple Home Key 驗證、ESP-NOW 轉送接收與 HomeKit NFC 憑證佈建保留。**RFID** 分頁可設定連續錯誤次數與暫停秒數，預設 **5 次／60 秒**；有效驗證清除連續錯誤，重送不重計，讀取／通訊／儲存故障不算憑證錯誤。未配置雙板 MAC 與通訊金鑰時，NFC 保持停用。配置步驟見 [Home Key](docs/homekey_setup.md)。
 
 **Other settings / Door release** 可自訂開門時間 **1–800 ms**，預設 **200 ms（0.2 秒）**，HomeKit、紅外線與已驗證 Home Key 共用。按 **Save and restart** 後生效，斷電仍保留。v1–v3 設定自動載入，保留 Wi-Fi、HomeKit 配對碼、IR 按鍵及已有自訂時間。GPIO4 驅動強度 3、2 秒冷卻與兩種用途各 16 組 IR 按鍵均保留。
 
-最近一次實機燒錄紀錄仍為 **1.2.3-web-recovery**；本次變更尚未燒錄。紀錄見 [VALIDATION.md](VALIDATION.md)。
+2026-11-23 已透過 USB 寫入 NFC 修正並通過雜湊校驗。紀錄見 [VALIDATION.md](VALIDATION.md)。
 
 接線與操作請參考 [繁體中文 PDF 說明書](docs/openlatch_manual_zh-TW.pdf)（10 頁，含零件照片、接線圖與英文網頁／IR 設定頁），另有 [Markdown 版本](docs/openlatch_manual_zh-TW.md)。第 3～4 頁為控制器側接線；對講機只能在原按鈕接點經確認後，依第 7 頁的條件式接法評估介接。
 

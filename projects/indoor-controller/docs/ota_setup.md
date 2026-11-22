@@ -1,6 +1,6 @@
 # OTA updates
 
-Current source **1.4.0-verified-ota** extends the original `1.3.0-ota` update flow: the indoor ESP32-C3 can receive a local firmware
+Current source **1.5.0** extends the original `1.3.0-ota` update flow: the indoor ESP32-C3 can receive a local firmware
 update from **Other settings / Firmware update**. The outdoor ESP-32S firmware
 is still installed over USB.
 

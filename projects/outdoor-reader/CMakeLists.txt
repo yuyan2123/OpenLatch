@@ -12,7 +12,8 @@ set(EXTRA_COMPONENT_DIRS
     "${VENDOR}/pn532_hal"
     "${VENDOR}/loggable")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(OpenLatchOutdoor VERSION 0.1.0)
+set(PROJECT_VER "1.5.0")
+project(OpenLatchOutdoor VERSION ${PROJECT_VER})
 
 # Upstream's quoted -DFMT_THROW macro is not preserved by PlatformIO/SCons on
 # Windows. Retain fail-stop behavior with a compiler trap, without quoted text.

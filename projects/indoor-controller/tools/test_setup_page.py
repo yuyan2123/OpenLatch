@@ -50,7 +50,7 @@ def reset():
                  pairing_code="59263814", relay_pulse_ms=200, default_password=True, settings_ready=True,
                  nfc_max_failures=5, nfc_lockout_seconds=60, nfc_failures=0, nfc_lockout_remaining_ms=0,
                  nfc_configured=False, nfc_provisioned=False, nfc_connected=False,
-                 firmware_version="1.4.0-verified-ota", password_required=False, boot_id="before-update", firmware_sha256="b"*64, firmware_healthy=True, ota_supported=True, ota_max_bytes=1966080, firmware_test_build=False,
+                 firmware_version="1.5.0", password_required=False, boot_id="before-update", firmware_sha256="b"*64, firmware_healthy=True, ota_supported=True, ota_max_bytes=1966080, firmware_test_build=False,
                  hardware_ready=True, ir_ready=True, ir_learning=False, ir_enabled=False,
                  ir_protocol="none", ir_address=0, ir_command=0,
                  ir_event="Ready. Start learning to register an unlock button.",

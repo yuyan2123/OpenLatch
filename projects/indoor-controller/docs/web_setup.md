@@ -1,12 +1,11 @@
 # Phone setup: Wi-Fi and infrared
 
-Current source: **1.4.0-verified-ota** (not uploaded in this change).
-The latest recorded device upload is **1.2.3-web-recovery**. The English
+Current firmware: **1.5.0**. The English
 page supports up to 16 door buttons and 16 setup-access buttons and a ten-minute idle
 window. Browsing does not require login; password protection for changes is optional.
 IR/HomeKit relay time is now configurable from **1–800 ms**, with a **200 ms**
 default. GPIO initialization and the 2 second cooldown remain unchanged.
-For the last uploaded version, upload hashes, boot hardware/storage status and the served
+During the earlier 1.2.3-web-recovery bench test, upload hashes, boot hardware/storage status and the served
 page matching the embedded build were verified on COM7. The existing door
 and setup buttons were retained during the upgrade.
 

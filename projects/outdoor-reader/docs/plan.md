@@ -8,7 +8,7 @@ ESP-32S／PN532 SPI 韌體使用根目錄 `third_party/` 的 `pn532_cxx`、`pn53
 
 ## 門內端
 
-以下門內功能已加入 `indoor-controller`，原生測試與韌體建置可驗證程式；雙板配置及實機驗收仍待完成：
+以下門內功能已加入 `indoor-controller`，原生測試與韌體建置可驗證程式；最新實機驗證範圍見 [驗證紀錄](../VALIDATION.md)：
 
 1. ESP-NOW 接收器與既有 Wi-Fi／AP 復原共存，實作 `protocol.md` 的交握與重送規則。
 2. DigitalDoorKey 的 `ApduChannel` 接到 Exchange／Response；門內建立、驗證每個 session。

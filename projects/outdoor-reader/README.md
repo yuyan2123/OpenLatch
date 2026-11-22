@@ -4,7 +4,7 @@ ESP-32S／ESP32-WROOM-32、4 MB Flash，搭配 SPI 模式 PN532。門外優先�
 
 韌體使用根目錄 [third_party](../../third_party/README.md) 中的 PN532 通訊元件，獨立建置；來源版本與授權隨專案保存。
 
-門內 `indoor-controller` 已加入 ESP-NOW 接收、DigitalDoorKey HomeKey 驗證、HomeKit NFC 憑證佈建與錯誤次數限制。**雙板 MAC 配置與真實 iPhone／Watch 驗證仍待實機完成，尚未燒錄本次整合。** 見 [門內配置](../indoor-controller/docs/homekey_setup.md)。
+門內 `indoor-controller` 已加入 ESP-NOW 接收、DigitalDoorKey HomeKey 驗證、HomeKit NFC 憑證佈建與錯誤次數限制。目前韌體版本為 **1.5.0**。雙板 NFC 修正版已於 2026-11-23 完成 USB 燒錄；手機首次感應成功率仍待實測。 見 [門內配置](../indoor-controller/docs/homekey_setup.md)。
 
 ```text
 firmware/main/      ESP-NOW 與 PN532 韌體

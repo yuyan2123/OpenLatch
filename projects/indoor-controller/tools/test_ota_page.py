@@ -32,7 +32,7 @@ def main():
             page.goto(f"http://127.0.0.1:{server.server_port}/")
             qa.wait_js(page, "!document.querySelector('#save').disabled")
             page.locator("#tab-other").click()
-            assert page.locator("#firmware-version").inner_text() == "1.4.0-verified-ota"
+            assert page.locator("#firmware-version").inner_text() == "1.5.0"
             for width in (320, 390, 768, 1280, 1920):
                 page.set_viewport_size({"width": width, "height": 844})
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), width

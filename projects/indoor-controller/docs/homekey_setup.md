@@ -1,11 +1,9 @@
 # Apple Home Key
 
-`1.2.5-rfid-limits` adds indoor Home Key verification and credential provisioning
-to the ESP32-C3 controller. The outdoor ESP-32S/PN532 forwards NFC APDUs;
+In 1.5.0 the ESP32-C3 handles Home Key verification and credential provisioning. The outdoor ESP-32S/PN532 forwards NFC APDUs;
 the indoor controller runs the vendored DigitalDoorKey HomeKey profile from
 `third_party/DigitalDoorKey`. Its exact source version and license are included
-in the repository. A card UID
-or outdoor response alone cannot open the door.
+in the repository. Home Key requires credential verification. Enrolled RFID fobs use a separate authorization path on the indoor controller.
 
 ## Connect the controllers
 

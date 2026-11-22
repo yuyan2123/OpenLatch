@@ -1,8 +1,8 @@
 # Infrared learning and door release
 
-Current build: **1.2.3-web-recovery**. GPIO4 is explicitly configured as a
+Current build: **1.5.0**. GPIO4 is explicitly configured as a
 GPIO output with drive strength 3; the default release pulse is **200 ms**.
-The English setup page supports multiple buttons. Digest login is temporarily disabled.
+The English setup page supports multiple buttons. Browsing is public. When password protection is enabled, changing settings requires the setup password.
 
 The firmware supports up to 16 door buttons and 16 setup-access buttons. All firmware identifiers,
 comments and messages are English. No key is enrolled by default. Enrollment is

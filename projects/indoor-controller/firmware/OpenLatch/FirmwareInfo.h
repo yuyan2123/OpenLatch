@@ -3,7 +3,7 @@
 #include <cstdint>
 
 namespace door {
-inline constexpr char kFirmwareVersion[] = "1.4.0-verified-ota";
+inline constexpr char kFirmwareVersion[] = "1.5.0";
 // Installed controllers match these exact bytes when accepting an OTA image.
 inline constexpr char kFirmwarePrefix[] = "OpenLatch/DoorRelease/ESP32-C3/OTA1:";
 inline constexpr uint8_t kFirmwareSuffix[]{1, 0xa7, 0x4c, 0x42, 0xb9, 0x67};
