@@ -8,6 +8,7 @@
 class BoundedWebServer final : public WebServer {
  public:
   explicit BoundedWebServer(int port) : WebServer(port) {}
+  bool listening() { return static_cast<bool>(_server); }
   void stop() { closeClient(true); WebServer::stop(); }
   void handleClient() override {
     if (!receiving_) {

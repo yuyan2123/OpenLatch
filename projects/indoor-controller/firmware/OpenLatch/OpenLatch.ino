@@ -12,6 +12,7 @@
 #include "IrStore.h"
 #include "SerialLine.h"
 #include "SetupPortal.h"
+#include "LanSubnetApi.h"
 #include "HomeKeyManager.h"
 #include "HomeKeyServices.h"
 #include <HAP.h>
@@ -41,6 +42,7 @@ door::RfidFobs fobs;
 HomeKeyStore homeKeyStore;
 HomeKeyManager homeKey(homeKeyStore, nfcAttempts);
 SetupPortal setupPortal(settings, settingsStore, infrared, setupInfrared, fobs, controller, relay, nfcAttempts);
+LanSubnetApi lanSubnetApi;
 std::atomic<bool> networkLost{false};
 bool hardwareReady = false;
 bool homekitStarted = false;
@@ -268,6 +270,7 @@ void setup() {
     firmwarePaused = true;
   });
   setupPortal.begin(bootAt, settingsReady, hardwareReady);
+  lanSubnetApi.begin();
   uint8_t stationMac[6]{};
   if (esp_read_mac(stationMac, ESP_MAC_WIFI_STA) == ESP_OK)
     Serial.printf("nfc_station_mac: %02X:%02X:%02X:%02X:%02X:%02X\n", stationMac[0], stationMac[1], stationMac[2], stationMac[3], stationMac[4], stationMac[5]);
@@ -319,6 +322,7 @@ void loop() {
   setupPortal.nfcStatus(homeKey.configured(), homeKey.provisioned(), homeKey.connected(), homeKey.transport());
   if (!setupPortal.restarting() && !setupPortal.updating()) pollSerial();
   setupPortal.poll();
+  lanSubnetApi.poll();
   if (firmwarePaused && !setupPortal.updating() && !setupPortal.restarting()) {
     // Drop buffered IR and require a new quiet interval after a failed upload.
     infrared.cancel(millis()); setupInfrared.cancel(millis());

@@ -6,13 +6,20 @@
 #include <deque>
 #include <algorithm>
 #include "Arduino.h"
+#include "WiFi.h"
 
 enum HTTPMethod { HTTP_GET, HTTP_POST, HTTP_OPTIONS };
 enum HTTPAuthMethod { BASIC_AUTH, DIGEST_AUTH };
 enum HTTPRawStatus { RAW_START, RAW_WRITE, RAW_END, RAW_ABORTED };
 constexpr size_t CONTENT_LENGTH_NOT_SET = size_t(-1);
 struct HTTPRaw { HTTPRawStatus status = RAW_START; size_t totalSize = 0, currentSize = 0; uint8_t buf[1436]{}; };
-struct FakeSocket { std::string input; size_t cursor = 0; bool open = true; int timeout = 0, response = 0; };
+struct FakeSocket {
+  std::string input;
+  size_t cursor = 0;
+  bool open = true;
+  int timeout = 0, response = 0;
+  IPAddress source{"192.168.1.23"}, destination{"192.168.1.42"};
+};
 struct FakeClient {
   std::shared_ptr<FakeSocket> socket;
   bool stopped = false;
@@ -27,9 +34,13 @@ struct FakeClient {
   }
   void setTimeout(int timeout) { if (socket) socket->timeout = timeout; }
   void stop() { stopped = true; if (socket) socket->open = false; }
+  IPAddress remoteIP() const { return socket ? socket->source : IPAddress{}; }
+  IPAddress localIP() const { return socket ? socket->destination : IPAddress{}; }
 };
 struct FakeNetworkServer {
   std::deque<std::shared_ptr<FakeSocket>> clients;
+  bool listening = false;
+  explicit operator bool() const { return listening; }
   FakeClient accept() { if (clients.empty()) return {}; auto socket = clients.front(); clients.pop_front(); return {socket, false}; }
 };
 class WebServer;
@@ -55,7 +66,7 @@ class WebServer {
   String host = "192.168.4.1", body, suppliedPassword;
   HTTPMethod verb = HTTP_GET;
   HTTPAuthMethod challenge = BASIC_AUTH;
-  bool active = false, authenticated = false;
+  bool active = false, authenticated = false, beginFails = false;
   void collectHeaders(const char*[], size_t) {}
   void on(const char* path, HTTPMethod method, std::function<void()> handler) { on(path, method, handler, {}); }
   void on(const char* path, HTTPMethod method, std::function<void()> handler, std::function<void()> upload) {
@@ -80,8 +91,8 @@ class WebServer {
     if (!abort && !connection.stopped) routes.at({path, HTTP_POST})();
   }
   void onNotFound(std::function<void()> handler) { notFound = handler; }
-  void begin() { active = true; ++starts; }
-  void stop() { active = false; ++stops; }
+  void begin() { _server.listening = active = !beginFails; ++starts; }
+  void stop() { _server.listening = active = false; ++stops; }
   virtual void handleClient() {}
   std::shared_ptr<FakeSocket> enqueue(std::string input) {
     auto socket = std::make_shared<FakeSocket>(); socket->input = std::move(input); _server.clients.push_back(socket); return socket;

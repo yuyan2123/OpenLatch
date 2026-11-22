@@ -1,5 +1,6 @@
 #include "PortalFixture.h"
 #include "../firmware/OpenLatch/FirmwareBoot.h"
+#include "../firmware/OpenLatch/LanSubnetApi.h"
 using Guard = door::HttpRequestGuard;
 
 std::string header(const std::string& path, size_t size, const std::string& type = "application/x-www-form-urlencoded", const std::string& token = "") {
@@ -86,8 +87,66 @@ void boot_confirmation_and_failure() {
   resetOta(); otaBootState = ESP_OTA_IMG_PENDING_VERIFY; otaHashFails = true;
   boot.begin(0xfffffff0u); boot.poll(0xfffffff0u+30000,true); CHECK(otaRollbacks == 1); CHECK(!boot.healthy());
 }
+void subnet_api_stays_available_after_setup_expires() {
+  Fixture f(true);
+  auto* setup = fakeWeb;
+  LanSubnetApi api;
+  auto* subnet = fakeWeb;
+  api.begin();
+  CHECK(setup->port == 80); CHECK(subnet->port == 8080);
+  api.poll(); CHECK(!subnet->active);
+  WiFi.connected = true;
+  f.portal.poll(); api.poll();
+  CHECK(setup->active); CHECK(subnet->active);
+
+  const auto probe = [&](const IPAddress& source, const IPAddress& destination, const char* body) {
+    auto request = subnet->enqueue("GET /api/same-subnet HTTP/1.1\r\nHost: openlatch.local:8080\r\n"
+                                   "X-Forwarded-For: 192.168.1.23\r\n\r\n");
+    request->source = source;
+    request->destination = destination;
+    api.poll();
+    CHECK(request->response == 200); CHECK(subnet->body == body);
+    CHECK(subnet->outputHeaders["Cache-Control"] == "no-store");
+  };
+  constexpr auto yes = "{\"same_subnet\":true}";
+  constexpr auto no = "{\"same_subnet\":false}";
+  fakeMillis = door::kSetupWindowMs - 1;
+  probe({"192.168.1.23"}, WiFi.stationIp, yes);
+  ++fakeMillis;
+  f.portal.poll(); api.poll();
+  CHECK(!setup->active); CHECK(subnet->active);
+  probe({"192.168.1.23"}, WiFi.stationIp, yes);
+  probe({"192.168.2.23"}, WiFi.stationIp, no);
+  probe({"192.168.1.23"}, WiFi.softAPIP(), no);
+  probe({"fe80::1"}, WiFi.stationIp, no);
+  probe({"192.168.0.23"}, WiFi.stationIp, no);
+  WiFi.stationMask = {"255.255.254.0"};
+  probe({"192.168.0.23"}, WiFi.stationIp, yes);
+  WiFi.stationIp = {"192.168.5.42"};
+  probe({"192.168.4.23"}, WiFi.stationIp, yes);
+  probe({"192.168.4.23"}, {"192.168.1.42"}, no);
+  WiFi.stationMask = {"0.0.0.0"};
+  probe({"192.168.4.23"}, WiFi.stationIp, no);
+
+  for (const auto* request : {"GET /api/status HTTP/1.1\r\nHost: x\r\n\r\n",
+                              "POST /api/same-subnet HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n"}) {
+    auto socket = subnet->enqueue(request);
+    api.poll(); CHECK(socket->response == 404); CHECK(subnet->body.empty());
+  }
+  WiFi.connected = false;
+  api.poll(); CHECK(!subnet->active);
+  WiFi.connected = true;
+  subnet->beginFails = true;
+  api.poll(); CHECK(!subnet->active); CHECK(subnet->starts == 2);
+  subnet->beginFails = false;
+  api.poll(); CHECK(subnet->starts == 2);
+  fakeMillis += 1000;
+  api.poll(); CHECK(subnet->active); CHECK(subnet->starts == 3);
+  CHECK(!fakeGpio);
+}
 int main() {
   bounded_headers_and_framing(); requests_are_bounded_before_body_parsing();
   form_and_ota_through_the_actual_server_adapter(); interrupted_upload_aborts_the_inactive_partition(); boot_confirmation_and_failure();
-  std::cout << "PASS: bounded HTTP adapter, framing/size/idle/absolute deadlines, streamed OTA abort and boot health confirmation.\n";
+  subnet_api_stays_available_after_setup_expires();
+  std::cout << "PASS: bounded HTTP adapter, request deadlines, streamed OTA, boot health and independent subnet API.\n";
 }

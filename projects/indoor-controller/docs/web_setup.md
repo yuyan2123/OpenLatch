@@ -161,6 +161,17 @@ selected button; clearing affects only that action's list. A full list disables
 adding until a button is removed. Buttons retain their slot IDs when another
 is removed; a reused slot gets a fingerprint check to prevent stale deletion.
 
+## Check the iPhone's subnet
+
+Send a `GET` request from the iPhone, for example from a Shortcut, to
+`http://openlatch-xxxxxx.local:8080/api/same-subnet`. Use the controller's IPv4
+address in the URL if `.local` does not resolve.
+
+The API returns `{"same_subnet":true}` when the requesting IPv4 address matches
+the controller's Wi-Fi subnet. A reachable request from another subnet returns
+`{"same_subnet":false}`. If the controller is unreachable, the request fails.
+The API stays available on Wi-Fi after the setup window closes.
+
 ## Network fields and storage
 
 Network names accept at most 32 bytes. UTF-8 names can consume several bytes per
