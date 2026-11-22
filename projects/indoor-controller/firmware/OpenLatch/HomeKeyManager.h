@@ -117,12 +117,15 @@ class HomeKeyManager {
   }
   bool radioBegin() {
     uint32_t version = 0;
-    if (esp_now_init() != ESP_OK || esp_now_get_version(&version) != ESP_OK || version < 2 ||
-        esp_now_set_pmk(credentials::pmk.data()) != ESP_OK) return false;
+    if (esp_now_init() != ESP_OK) return false;
     esp_now_peer_info_t peer{}; peer.encrypt = true; peer.ifidx = WIFI_IF_STA; peer.channel = 0;
     std::copy(credentials::outdoorMac.begin(), credentials::outdoorMac.end(), peer.peer_addr);
     std::copy(credentials::lmk.begin(), credentials::lmk.end(), peer.lmk);
-    return esp_now_add_peer(&peer) == ESP_OK && esp_now_register_recv_cb(receive) == ESP_OK;
+    if (esp_now_get_version(&version) == ESP_OK && version >= 2 &&
+        esp_now_set_pmk(credentials::pmk.data()) == ESP_OK && esp_now_add_peer(&peer) == ESP_OK &&
+        esp_now_register_recv_cb(receive) == ESP_OK) return true;
+    esp_now_deinit();
+    return false;
   }
   void receiveFrame(const uint8_t* data, size_t length, outdoor::Link link, outdoor::LanPeer peer = {}) {
     if (!codec_.decode(data, length, false, frame_)) return;
@@ -161,9 +164,15 @@ class HomeKeyManager {
       pump(); vTaskDelay(pdMS_TO_TICKS(2));
     }
     if (!session_.active() || !enabled_ || admission_ != attemptAdmission_ || !session_.takeResponse(response_)) {
+      Serial.printf("nfc_homekey: tap=%lu ins=%02x transport failed\n", (unsigned long)session_.tapId(), unsigned(command[1]));
       transportError_ = true; return false;
     }
-    response.assign(response_.payload.begin(), response_.payload.begin() + response_.length); return true;
+    response.assign(response_.payload.begin(), response_.payload.begin() + response_.length);
+    const unsigned sw = unsigned(response[response.size()-2]) * 256 + response.back();
+    if (sw != 0x9000 || command[1] == 0x3c)
+      Serial.printf("nfc_homekey: tap=%lu ins=%02x p1=%02x sw=%04x\n",
+                    (unsigned long)session_.tapId(), unsigned(command[1]), unsigned(command[2]), sw);
+    return true;
   }
   const std::shared_ptr<Channel>& apduChannel() {
     if (!channel_) channel_ = std::make_shared<Channel>([this](auto& command, auto& response) { return exchange(command, response); });
@@ -224,9 +233,9 @@ class HomeKeyManager {
       session_.reset(); connectedLink_ = outdoor::Link::None;
       return 50;
     }
-    if (!radio_) {
+    if (!radio_ && uint32_t(millis() - radioAttemptAt_) >= kRadioRetryMs) {
+      radioAttemptAt_ = millis();
       radio_ = radioBegin();
-      if (!radio_) { configured_ = false; return 0; }
     }
     {
       std::unique_lock<std::mutex> lock(store_.mutex, std::try_to_lock);
@@ -249,6 +258,7 @@ class HomeKeyManager {
     // the session, so keepalive retries cannot delay NFC authentication.
     door::IndoorSession::Tag tag;
     if (!session_.waiting() && session_.takeTag(millis(), &tag)) {
+      Serial.printf("nfc_tag: tap=%lu link=%s\n", (unsigned long)session_.tapId(), transport());
       // Reserve ISO-DEP targets for the Home Key APDU path.
       if (tag.sak & 0x20) {
         if (provisioned_ && enabled_) authenticate();
@@ -258,7 +268,7 @@ class HomeKeyManager {
           (void)xQueueSend(fobs_, &tag, 0);
         session_.release(millis());
       }
-    } else if (uint32_t(millis() - pingAt_) >= 1000 && session_.ping(millis())) pingAt_ = millis();
+    } else if (uint32_t(millis() - pingAt_) >= 250 && session_.ping(millis())) pingAt_ = millis();
     else prepareAuthentication();
     return 5;
   }
@@ -279,6 +289,8 @@ class HomeKeyManager {
   outdoor::Link link_ = outdoor::Link::None;
   std::atomic<outdoor::Link> connectedLink_{outdoor::Link::None};
   uint32_t lanAttemptAt_ = uint32_t(0) - 1000;
+  static constexpr uint32_t kRadioRetryMs = 5000;
+  uint32_t radioAttemptAt_ = uint32_t(0) - kRadioRetryMs;
   bool lanListening_ = false;
   QueueHandle_t inbox_ = nullptr, verified_ = nullptr, fobs_ = nullptr;
   Received incoming_{}; outdoor::Frame frame_{}, outgoing_{}, response_{}; outdoor::Wire wire_{};

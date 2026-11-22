@@ -13,7 +13,6 @@ class PnReader final : public Reader {
   ExchangeResult exchange(const uint8_t* command, size_t length, uint8_t* response, size_t& size) override;
   void release() override;
   void endTap(bool isoDep) override;
-  bool restartField() override;
   std::optional<bool> poll(std::vector<uint8_t>& uid, std::array<uint8_t, 2>& atqa, uint8_t& sak);
   bool healthy();
  private:

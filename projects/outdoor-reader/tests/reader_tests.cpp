@@ -42,7 +42,7 @@ struct Hmac : Auth {
   }
 };
 struct FakeReader : Reader {
-  int configurations = 0, exchanges = 0, releases = 0, fieldRestarts = 0, isoDepEnds = 0;
+  int configurations = 0, exchanges = 0, releases = 0, isoDepEnds = 0;
   bool available = true;
   ExchangeResult exchangeResult = ExchangeResult::Ok;
   size_t responseLength = 2;
@@ -56,7 +56,7 @@ struct FakeReader : Reader {
   }
   void release() override { ++releases; }
   void endTap(bool isoDep) override { release(); if (isoDep) ++isoDepEnds; }
-  bool restartField() override { ++fieldRestarts; return true; }
+
 };
 struct Sink : Output {
   int epochs = 0;
@@ -271,40 +271,26 @@ void channelScanning() {
   CHECK(single.probeDue(500, false) && single.current() == 11);
   std::cout << "PASS: preferred channel on reconnect, masked fallback, single channel and clock wrap.\n";
 }
-void rfTimeoutRetriesOneFreshTap() {
+void rfErrorRequiresRemoval() {
   Fixture f; f.bind();
-  const auto originalTap = f.tap();
+  f.tap();
   const auto originalCommand = f.command();
   f.reader.exchangeResult = ExchangeResult::RetryableRfError;
   f.session.receive(600, originalCommand);
   CHECK(f.sink.sent.back().code == Code::ReaderError);
   CHECK(!f.session.active() && f.session.bound());
   CHECK(f.reader.isoDepEnds == 1);
-  CHECK(f.session.prepareRetry(610)); CHECK(f.session.prepareRetry(700));
-  CHECK(f.reader.fieldRestarts == 1);
-  const uint8_t uid[]{1, 2, 3, 4};
-  CHECK(f.session.detected(710, uid, sizeof uid, {}, 0x20));
-  const auto newTap = f.sink.sent.back().tap;
-  CHECK(newTap == originalTap + 1);
-  f.session.receive(715, originalCommand);
-  CHECK(f.reader.exchanges == 1);
-  CHECK(f.sink.sent.back().tap == originalTap && f.sink.sent.back().code == Code::ReaderError);
-  auto nextCommand = f.command(3);
-  nextCommand.tap = newTap;
-  f.session.receive(720, nextCommand);
-  CHECK(f.reader.exchanges == 2);
-  CHECK(!f.session.prepareRetry(730)); CHECK(f.reader.fieldRestarts == 1);
-  CHECK(!f.session.detected(740, uid, sizeof uid, {}, 0x20));
-  f.session.presence(800, false); f.session.presence(1300, false);
-  CHECK(f.session.detected(1300, uid, sizeof uid, {}, 0x20));
+  const uint8_t uid[]{1,2,3,4};
+  CHECK(!f.session.detected(710, uid, sizeof uid, {}, 0x20));
+  f.session.presence(800, false);
+  f.session.presence(1300, false);
+  CHECK(!f.session.canPoll(1300));
+  auto ping = f.config; ping.seq = 3; ping.type = Type::Ping; ping.length = 0;
+  f.session.receive(1300, ping);
+  CHECK(f.session.canPoll(1649));
+  f.session.receive(1649, ping);
+  CHECK(!f.session.canPoll(1650));
+  CHECK(f.session.detected(1649, uid, sizeof uid, {}, 0x20));
 
-  Fixture expired; expired.bind(); expired.tap();
-  expired.reader.exchangeResult = ExchangeResult::RetryableRfError;
-  expired.session.receive(600, expired.command());
-  CHECK(expired.session.prepareRetry(610));
-  CHECK(!expired.session.prepareRetry(1810));
-  CHECK(!expired.session.detected(1810, uid, sizeof uid, {}, 0x20));
-  CHECK(expired.reader.fieldRestarts == 1);
-  std::cout << "PASS: an ISO-DEP timeout permits one fresh tap and preserves replay and removal checks.\n";
 }
-int main() { cryptoAndWire(); pairingAndRetries(); faultsAndHardDeadline(); channelScanning(); rfTimeoutRetriesOneFreshTap(); }
+int main() { cryptoAndWire(); pairingAndRetries(); faultsAndHardDeadline(); channelScanning(); rfErrorRequiresRemoval(); }

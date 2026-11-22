@@ -43,6 +43,7 @@ inline std::function<void(const uint8_t*,size_t)> fakeRadioSend;
 inline std::array<uint8_t,6> fakeStationMac{2,0,0,0,0,1};
 inline esp_err_t esp_read_mac(uint8_t* output,int){std::copy(fakeStationMac.begin(),fakeStationMac.end(),output);return ESP_OK;}
 inline esp_err_t esp_now_init(){++fakeRadioStarts;return fakeRadioFailure?ESP_FAIL:ESP_OK;}
+inline esp_err_t esp_now_deinit(){fakeReceive=nullptr;return ESP_OK;}
 inline esp_err_t esp_now_get_version(uint32_t* version){*version=2;return ESP_OK;}
 inline esp_err_t esp_now_set_pmk(const uint8_t*){return ESP_OK;}
 inline esp_err_t esp_now_add_peer(const esp_now_peer_info_t*){return ESP_OK;}

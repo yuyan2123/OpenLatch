@@ -29,7 +29,6 @@ struct TestReader : outdoor::Reader {
     size=2;return outdoor::ExchangeResult::Ok;
   }
   void release() override {}
-  bool restartField() override { return true; }
 };
 struct TestOutput : outdoor::Output {
   TestAuth auth; outdoor::Codec codec{auth,credentials::indoorMac,credentials::outdoorMac};
@@ -56,7 +55,7 @@ struct TestOutput : outdoor::Output {
 struct Fixture {
   HomeKeyStore store; door::NfcAttemptLimiter attempts; HomeKeyManager manager{store,attempts};
   TestReader reader; TestOutput output; outdoor::ReaderSession outside{reader,output};
-  explicit Fixture(bool preferWifi = false, bool provisionHomeKey = true) {
+  explicit Fixture(bool preferWifi = false, bool provisionHomeKey = true, bool radioUnavailable = false) {
     fakeMillis=0;WiFi={};WiFi.connected=true;fakeQueues.clear();fakeReceive=nullptr;
     fakeQueueFailure=fakeTaskFailure=fakeRadioFailure=fakeSendFailure=fakeShaFailure=false;
     fakeRadioStarts=fakeProfileRuns=0;fakeCredentialValid=true;fakeProfileStalls=false;fakeDelayHook={};fakeVerificationHook={};fakeProvisionHook={};
@@ -79,6 +78,7 @@ struct Fixture {
     if (provisionHomeKey) { store.issuerList().push_back(issuer);store.save();CHECK(store.provisioned()); }
     manager.enabled(true);
     fakeRadioSend=[this](const uint8_t* bytes,size_t size){outdoor::Frame frame;CHECK(output.codec.decode(bytes,size,true,frame));outside.receive(fakeMillis,frame);};
+    fakeRadioFailure = radioUnavailable;
     outside.begin(0);CHECK(manager.poll()>0);
     if (preferWifi) {
       outdoor::fakeLanSend = [this](const outdoor::Wire& wire, outdoor::LanPeer peer) {
@@ -233,12 +233,12 @@ void rf_timeout_recovers_with_fresh_home_key_verification() {
   f.tap();
   CHECK(!f.manager.takeVerified());
   CHECK(f.manager.connected());
-  CHECK(f.outside.prepareRetry(fakeMillis));
+
   f.reader.rfTimeout = false;
   const uint8_t uid[]{8, 2, 3, 4};
   fakeMillis += 100;
-  CHECK(f.outside.detected(fakeMillis, uid, sizeof uid, {}, 0x20));
-  f.manager.poll(); f.manager.poll();
+  CHECK(!f.outside.detected(fakeMillis, uid, sizeof uid, {}, 0x20));
+  f.tap();
   CHECK(f.manager.takeVerified()); CHECK(!f.manager.takeVerified());
   CHECK(f.attempts.failures(fakeMillis) == 0);
 }
@@ -247,7 +247,8 @@ void idle_preparation_is_consumed_once_and_refreshed_after_changes() {
   CHECK(fakeHomeKeySessions == 1);
   f.tap(); CHECK(f.manager.takeVerified());
   CHECK(fakeHomeKeySessions == 1);
-  f.manager.poll(); CHECK(fakeHomeKeySessions == 2);
+  for (int i = 0; i < 4; ++i) f.manager.poll();
+  CHECK(fakeHomeKeySessions == 2);
   f.store.save();
   f.manager.poll(); CHECK(fakeHomeKeySessions == 3);
   f.tap(); CHECK(f.manager.takeVerified());
@@ -306,6 +307,16 @@ void reader_key_query_before_provisioning_returns_empty_tlv() {
   CHECK(!access.update());
 }
 void initialization_and_traffic_failures() {
+  {
+    Fixture f(true, true, true);
+    f.tap();
+    CHECK(f.manager.takeVerified());
+    CHECK(fakeRadioStarts == 1);
+    fakeRadioFailure = false;
+    fakeMillis += 5000;
+    f.manager.poll();
+    CHECK(fakeRadioStarts == 2 && fakeReceive);
+  }
   {Fixture f;fakeSendFailure=true;fakeMillis+=1000;f.manager.poll();f.manager.poll();fakeMillis+=1600;f.manager.poll();CHECK(!f.manager.connected());}
   {Fixture f;outdoor::Wire wire;CHECK(f.output.codec.encode(f.output.last,false,wire));
     auto wrong=credentials::outdoorMac;wrong[5]^=1;esp_now_recv_info_t info{wrong.data(),credentials::indoorMac.data()};
@@ -316,9 +327,33 @@ void initialization_and_traffic_failures() {
   HomeKeyStore store;door::NfcAttemptLimiter attempts;attempts.begin();
   {fakeQueueFailure=true;HomeKeyManager manager(store,attempts);CHECK(!manager.begin());CHECK(!manager.configured());fakeQueueFailure=false;}
   {fakeTaskFailure=true;HomeKeyManager manager(store,attempts);CHECK(!manager.begin());CHECK(!manager.configured());fakeTaskFailure=false;}
-  {HomeKeyManager manager(store,attempts);CHECK(manager.begin());fakeRadioFailure=true;CHECK(manager.poll()==0);CHECK(!manager.configured());fakeRadioFailure=false;}
+}
+void lost_keepalive_recovers_with_a_new_tap() {
+  Fixture f;
+  f.outside.presence(0, false);
+  f.outside.presence(500, false);
+  fakeSendFailure = true;
+  for (auto time : {1000, 1005, 1805, 2600}) { fakeMillis = time; f.manager.poll(); }
+  CHECK(!f.manager.connected() && f.outside.bound());
+  fakeSendFailure = false;
+  const uint8_t uid[]{1,2,3,4};
+  const auto oldNonce = f.outside.nonce();
+  CHECK(f.outside.detected(fakeMillis, uid, sizeof(uid), {}, 0x20));
+  const auto oldTag = f.output.last;
+  f.manager.poll();
+  CHECK(!f.manager.takeVerified() && f.reader.exchanges == 0);
+  fakeMillis += outdoor::kIdleMs;
+  f.outside.tick(fakeMillis);
+  CHECK(!f.outside.bound() && f.outside.nonce() != oldNonce);
+  f.outside.hello(); f.manager.poll(); f.manager.poll();
+  CHECK(f.manager.connected());
+  f.output.send(oldTag); f.manager.poll();
+  CHECK(!f.manager.takeVerified() && f.reader.exchanges == 0);
+  f.tap();
+  CHECK(f.manager.takeVerified() && !f.manager.takeVerified());
 }
 int main() {
+  lost_keepalive_recovers_with_a_new_tap();
   idle_preparation_is_consumed_once_and_refreshed_after_changes();
   missing_home_key_applet_does_not_lock_out_home_key();
   rf_timeout_recovers_with_fresh_home_key_verification();

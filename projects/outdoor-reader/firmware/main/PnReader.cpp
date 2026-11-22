@@ -10,7 +10,7 @@
 
 namespace outdoor {
 namespace {
-constexpr uint32_t kBetweenIsoDepTapsMs = 800, kRetryFieldOffMs = 350;
+constexpr uint32_t kBetweenIsoDepTapsMs = 800;
 uint32_t clockMs() { return uint32_t(esp_timer_get_time() / 1000); }
 }
 // ECP is a broadcast. A 6.4 ms RF timeout and zero retries let the PN532 finish
@@ -69,9 +69,6 @@ bool PnReader::pauseField(uint32_t duration) {
   }
   fieldPauseMs_ = duration;
   return true;
-}
-bool PnReader::restartField() {
-  return pauseField(kRetryFieldOffMs);
 }
 std::optional<bool> PnReader::poll(std::vector<uint8_t>& uid, std::array<uint8_t, 2>& atqa, uint8_t& sak) {
   if (!ready_) return std::nullopt;

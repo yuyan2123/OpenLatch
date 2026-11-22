@@ -106,6 +106,7 @@ class IndoorSession {
   bool bound() const { return bound_; }
   bool waiting() const { return waiting_; }
   bool active() const { return active_; }
+  uint32_t tapId() const { return tap_; }
   const outdoor::Nonce& nonce() const { return indoor_; }
  private:
   Frame make(Type type) {

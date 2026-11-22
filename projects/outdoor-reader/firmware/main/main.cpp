@@ -327,13 +327,12 @@ extern "C" void app_main() {
         if (link == Link::Wifi) radio.route(link);
         session.hello();
       }
-    } else if (!session.active()) {
+    } else if (session.canPoll(now)) {
       if (uint32_t(now - healthAt) >= 2000) {
         healthAt = now;
         if (!pn.healthy()) { session.begin(nowMs()); continue; }
       }
-      const bool retry = session.prepareRetry(now);
-      const bool waitingForRemoval = session.rearming() && !retry;
+      const bool waitingForRemoval = session.rearming();
       // Keep Home Key ECP on removal probes too. A burst of bare NFC-A polls
       // can make an iPhone present its default payment card.
       if (!waitingForRemoval || uint32_t(now - presenceAt) >= kPresenceProbeMs) {
@@ -345,8 +344,8 @@ extern "C" void app_main() {
         } else if (!waitingForRemoval && present.value_or(false)) {
           tapStartedAt = nowMs();
           if (session.detected(tapStartedAt, uid.data(), uid.size(), atqa, sak)) {
-            if (retry) ESP_LOGI(kLog, "Reader tap restarted after RF error");
-            else tapLed.flash();
+            ESP_LOGI(kLog, "Reader tap detected: tap=%lu", static_cast<unsigned long>(session.tapId()));
+            tapLed.flash();
           } else pn.release();
         }
       }
