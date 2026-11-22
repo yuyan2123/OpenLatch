@@ -5,11 +5,13 @@
 namespace outdoor {
 constexpr uint32_t kLeaseMs = 5000, kTapMs = 5000, kIdleMs = 1500;
 constexpr uint32_t kTagRetryMs = 150, kReleaseQuietMs = 500;
+enum class ExchangeResult { Ok, Failed, RetryableRfError };
 struct Reader {
   virtual ~Reader() = default;
   virtual bool configure(const std::array<uint8_t, 8>& group) = 0;
-  virtual bool exchange(const uint8_t* command, size_t length, uint8_t* response, size_t& size) = 0;
+  virtual ExchangeResult exchange(const uint8_t* command, size_t length, uint8_t* response, size_t& size) = 0;
   virtual void release() = 0;
+  virtual bool restartField() { return false; }
 };
 struct Output {
   virtual ~Output() = default;
@@ -44,9 +46,18 @@ class ReaderSession {
       output_.send(tag_);
     }
   }
-  // Presence must disappear for a continuous quiet period before a new tap.
+  // An ISO-DEP RF error may trigger one fresh activation while the phone is still present.
+  bool prepareRetry(uint32_t now) {
+    if (retry_ == Retry::Pending) {
+      retryAt_ = now;
+      retry_ = reader_.restartField() ? Retry::Probing : Retry::None;
+    }
+    if (retry_ == Retry::Probing && elapsed(now, retryAt_) >= kRfRetryMs) retry_ = Retry::None;
+    return retry_ == Retry::Probing;
+  }
+  // After normal completion or an exhausted retry, wait for a continuous quiet period.
   void presence(uint32_t now, bool present) {
-    if (!rearming_) return;
+    if (!rearming_ || retry_ != Retry::None) return;
     if (present) { quiet_ = false; return; }
     if (!quiet_) { quiet_ = true; quietAt_ = now; }
     if (elapsed(now, quietAt_) >= kReleaseQuietMs) { rearming_ = quiet_ = false; }
@@ -54,8 +65,12 @@ class ReaderSession {
   bool detected(uint32_t now, const uint8_t* uid, size_t length,
                 std::array<uint8_t, 2> atqa, uint8_t sak) {
     tick(now);
-    if (!bound_ || active_ || rearming_ || !uid || !length || length > 10) return false;
+    const bool retry = retry_ == Retry::Probing && elapsed(now, retryAt_) < kRfRetryMs;
+    if (!bound_ || active_ || (rearming_ && !retry) || !uid || !length || length > 10) return false;
+    if (retry && !(sak & kIsoDep)) { retry_ = Retry::None; return false; }
     if (tapCounter_ == std::numeric_limits<uint32_t>::max()) { reset(now); return false; }
+    retried_ = retry; retry_ = Retry::None;
+    rearming_ = quiet_ = false;
     active_ = true;
     tap_ = ++tapCounter_; expectedRequest_ = 1;
     tapAt_ = commandAt_ = tagSentAt_ = now;
@@ -109,11 +124,14 @@ class ReaderSession {
       Frame result = make(Type::Response);
       result.tap = tap_; result.request = f.request;
       size_t size = kMaxPayload;
-      if (!reader_.exchange(f.payload.data(), f.length, result.payload.data(), size) ||
+      const auto exchange = reader_.exchange(f.payload.data(), f.length, result.payload.data(), size);
+      if (exchange != ExchangeResult::Ok ||
           size < 2 || size > kMaxPayload) {
         result.code = Code::ReaderError;
         size = 0;
         endTap(now);
+        if (exchange == ExchangeResult::RetryableRfError && !retried_ && (tag_.payload[tag_.length - 1] & kIsoDep))
+          retry_ = Retry::Pending;
       } else {
         ++expectedRequest_;
       }
@@ -122,6 +140,9 @@ class ReaderSession {
     }
   }
  private:
+  enum class Retry { None, Pending, Probing };
+  static constexpr uint8_t kIsoDep = 0x20;
+  static constexpr uint32_t kRfRetryMs = 600;
   static uint32_t elapsed(uint32_t now, uint32_t since) { return now - since; }
   Frame make(Type type) {
     Frame f;
@@ -132,12 +153,14 @@ class ReaderSession {
   }
   void endTap(uint32_t now) {
     reader_.release(); active_ = false;
+    retry_ = Retry::None;
     rearming_ = true; quiet_ = false; quietAt_ = now;
   }
   void reset(uint32_t now) {
     if (active_) reader_.release();
     outdoor_ = output_.randomNonce(); indoor_ = {};
     bound_ = active_ = cached_ = false;
+    retried_ = false; retry_ = Retry::None;
     rearming_ = true; quiet_ = false;
     tx_ = lastRx_ = tapCounter_ = tap_ = 0;
     leaseAt_ = quietAt_ = now;
@@ -157,6 +180,9 @@ class ReaderSession {
   bool bound_ = false, active_ = false, rearming_ = false, quiet_ = false, cached_ = false;
   uint32_t tx_ = 0, lastRx_ = 0, tapCounter_ = 0, tap_ = 0, expectedRequest_ = 1;
   uint32_t leaseAt_ = 0, tapAt_ = 0, commandAt_ = 0, tagSentAt_ = 0, quietAt_ = 0;
+  Retry retry_ = Retry::None;
+  uint32_t retryAt_ = 0;
+  bool retried_ = false;
   Frame tag_{}, lastInput_{}, lastOutput_{};
 };
 }  // namespace outdoor

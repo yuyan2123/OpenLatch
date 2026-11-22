@@ -331,16 +331,21 @@ extern "C" void app_main() {
         healthAt = now;
         if (!pn.healthy()) { session.begin(nowMs()); continue; }
       }
-      const bool present = pn.poll(uid, atqa, sak);
-      if (session.rearming()) {
+      // Only advertise Home Key when ready to handle a new tap.
+      const bool retry = session.prepareRetry(now);
+      const bool waitingForRemoval = session.rearming() && !retry;
+      const bool present = pn.poll(uid, atqa, sak, !waitingForRemoval);
+      if (waitingForRemoval) {
         session.presence(nowMs(), present);
         if (present) pn.release();
       } else if (present) {
         tapStartedAt = nowMs();
-        if (session.detected(tapStartedAt, uid.data(), uid.size(), atqa, sak)) tapLed.flash();
-        else pn.release();
+        if (session.detected(tapStartedAt, uid.data(), uid.size(), atqa, sak)) {
+          if (retry) ESP_LOGI(kLog, "Reader tap restarted after RF error");
+          else tapLed.flash();
+        } else pn.release();
       }
     }
-    vTaskDelay(pdMS_TO_TICKS(5));
+    vTaskDelay(pdMS_TO_TICKS(session.active() ? 1 : 5));
   }
 }

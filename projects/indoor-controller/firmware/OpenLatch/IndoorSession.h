@@ -61,6 +61,13 @@ class IndoorSession {
     const bool exchange = pending_.type == Type::Exchange;
     if (frame.type != (exchange ? Type::Response : Type::Ack) ||
         frame.tap != pending_.tap || frame.request != (exchange ? pending_.request : pending_.seq)) return;
+    if (exchange && frame.code == Code::ReaderError && !frame.length) {
+      // The reader already ended this tap. Its authenticated reply confirms
+      // that the paired session can still accept the next tap.
+      waiting_ = active_ = tagReady_ = responseReady_ = false;
+      leaseAt_ = now;
+      return;
+    }
     if (frame.code != Code::Ok || (!exchange && frame.length) || (exchange && frame.length < 2)) { reset(); return; }
     waiting_ = false; leaseAt_ = now;
     if (pending_.type == Type::Configure) bound_ = true;

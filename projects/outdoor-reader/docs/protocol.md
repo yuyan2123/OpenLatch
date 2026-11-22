@@ -56,6 +56,8 @@ Response code=3 表示 PN532 交換失敗，payload 為空，tap 已結束。其
 
 PN532 APDU 交換逾時 500 ms。門內可先等 800 ms，再原樣重送同一 Exchange，最多重試 1 次；仍失敗則取消當次驗證。整次 tap 最長 5 秒，新 Exchange 間閒置最長 1500 ms。這些時序仍需手機／讀取器實測。等待 Exchange 時不要插入 Ping，以免覆蓋單筆快取。
 
+PN532 回報 ISO-DEP 射頻逾時（`0x01`）或射頻協定錯誤（`0x0B`）時，會結束原 tap，重開射頻場並短暫找卡一次。重新讀到的卡片使用新的 tap 編號，從頭執行門內驗證。
+
 只有最後一筆、所有欄位與 payload 相同的輸入，才能重送相同回覆，不重做 NFC 指令。相同 seq 不同內容、舊 seq、跳號 request、錯誤 tap／nonce 都丟棄。門內需接受已處理的重複 Response／Tag，且不重做驗證步驟或開門。
 
 Tag 是非同步事件，不會清除控制請求的回覆快取。快取 Ack／Response 或 Tag 重送可能晚於較新的事件抵達；門內需以當次 nonce、tap、request 及待完成請求判斷，不能只以最高 seq 丟棄所有較舊回覆。Ping 不需要等待 Ack 才能處理 Tag；Exchange 則維持一次一筆。

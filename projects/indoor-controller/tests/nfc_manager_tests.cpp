@@ -17,11 +17,16 @@ struct TestAuth : outdoor::Auth {
 };
 struct TestReader : outdoor::Reader {
   int exchanges = 0; bool fail = false;
+  bool rfTimeout = false;
   bool configure(const std::array<uint8_t,8>&) override { return true; }
-  bool exchange(const uint8_t*,size_t,uint8_t* response,size_t& size) override {
-    ++exchanges; if(fail)return false; response[0]=0x90;response[1]=0;size=2;return true;
+  outdoor::ExchangeResult exchange(const uint8_t*,size_t,uint8_t* response,size_t& size) override {
+    ++exchanges;
+    if (rfTimeout) return outdoor::ExchangeResult::RetryableRfError;
+    if (fail) return outdoor::ExchangeResult::Failed;
+    response[0]=0x90;response[1]=0;size=2;return outdoor::ExchangeResult::Ok;
   }
   void release() override {}
+  bool restartField() override { return true; }
 };
 struct TestOutput : outdoor::Output {
   TestAuth auth; outdoor::Codec codec{auth,credentials::indoorMac,credentials::outdoorMac};
@@ -205,6 +210,34 @@ void fob_age_is_checked_after_dequeuing() {
   CHECK(submitted && received.length == 4);
   fakeQueueReceiveHook = {};
 }
+void reader_error_ends_only_the_current_home_key_tap() {
+  Fixture f(true);
+  f.reader.fail = true;
+  f.tap();
+  CHECK(!f.manager.takeVerified());
+  CHECK(!f.outside.active());
+  CHECK(f.manager.connected());
+  CHECK(f.attempts.failures(fakeMillis) == 0);
+  f.reader.fail = false;
+  f.tap();
+  CHECK(f.manager.takeVerified());
+  CHECK(f.manager.connected());
+}
+void rf_timeout_recovers_with_fresh_home_key_verification() {
+  Fixture f(true);
+  f.reader.rfTimeout = true;
+  f.tap();
+  CHECK(!f.manager.takeVerified());
+  CHECK(f.manager.connected());
+  CHECK(f.outside.prepareRetry(fakeMillis));
+  f.reader.rfTimeout = false;
+  const uint8_t uid[]{8, 2, 3, 4};
+  fakeMillis += 100;
+  CHECK(f.outside.detected(fakeMillis, uid, sizeof uid, {}, 0x20));
+  f.manager.poll(); f.manager.poll();
+  CHECK(f.manager.takeVerified()); CHECK(!f.manager.takeVerified());
+  CHECK(f.attempts.failures(fakeMillis) == 0);
+}
 void pairing_changes_revoke_pending_results() {
   Fixture f;f.tap();const uint32_t generation=f.store.generation();
   homeKeyControllersChanged();syncHomeKeyControllers(f.store);CHECK(f.store.generation()==generation);CHECK(f.store.issuers()[0].endpoints.size()==1);
@@ -261,6 +294,8 @@ void initialization_and_traffic_failures() {
   {HomeKeyManager manager(store,attempts);CHECK(manager.begin());fakeRadioFailure=true;CHECK(manager.poll()==0);CHECK(!manager.configured());fakeRadioFailure=false;}
 }
 int main() {
+  rf_timeout_recovers_with_fresh_home_key_verification();
+  reader_error_ends_only_the_current_home_key_tap();
   first_fob_after_idle_survives_a_lost_ping_ack();
   fob_age_is_checked_after_dequeuing();
   verified_results_are_single_use_and_expire();wifi_takes_priority_and_completes_one_tap();invalid_and_aborted_attempts_are_separate();tag_before_ping_ack_is_not_discarded();pairing_changes_revoke_pending_results();

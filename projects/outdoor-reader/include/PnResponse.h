@@ -8,4 +8,8 @@ namespace outdoor {
 inline bool validPnResponse(const uint8_t* data, size_t length, size_t capacity) {
   return data && length >= 4 && data[0] == 0x41 && data[1] == 0 && length - 2 <= capacity;
 }
+inline bool retryablePnRfError(const uint8_t* data, size_t length) {
+  // PN532 UM0701-02 §7.1. Only complete, unflagged status replies qualify.
+  return data && length == 2 && data[0] == 0x41 && (data[1] == 0x01 || data[1] == 0x0b);
+}
 }

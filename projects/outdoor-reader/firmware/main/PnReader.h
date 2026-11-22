@@ -9,9 +9,10 @@ namespace outdoor {
 class PnReader final : public Reader {
  public:
   bool configure(const std::array<uint8_t, 8>& group) override;
-  bool exchange(const uint8_t* command, size_t length, uint8_t* response, size_t& size) override;
+  ExchangeResult exchange(const uint8_t* command, size_t length, uint8_t* response, size_t& size) override;
   void release() override;
-  bool poll(std::vector<uint8_t>& uid, std::array<uint8_t, 2>& atqa, uint8_t& sak);
+  bool restartField() override;
+  bool poll(std::vector<uint8_t>& uid, std::array<uint8_t, 2>& atqa, uint8_t& sak, bool announce);
   bool healthy();
  private:
   std::array<uint8_t, 18> ecp_{};

@@ -42,18 +42,20 @@ struct Hmac : Auth {
   }
 };
 struct FakeReader : Reader {
-  int configurations = 0, exchanges = 0, releases = 0;
-  bool available = true, failExchange = false;
+  int configurations = 0, exchanges = 0, releases = 0, fieldRestarts = 0;
+  bool available = true;
+  ExchangeResult exchangeResult = ExchangeResult::Ok;
   size_t responseLength = 2;
   std::vector<uint8_t> command;
   bool configure(const std::array<uint8_t, 8>&) override { ++configurations; return available; }
-  bool exchange(const uint8_t* p, size_t size, uint8_t* output, size_t& capacity) override {
+  ExchangeResult exchange(const uint8_t* p, size_t size, uint8_t* output, size_t& capacity) override {
     ++exchanges; command.assign(p, p + size);
-    if (failExchange) return false;
+    if (exchangeResult != ExchangeResult::Ok) return exchangeResult;
     CHECK(capacity >= 2); output[0] = 0x90; output[1] = 0;
-    capacity = responseLength; return true;
+    capacity = responseLength; return ExchangeResult::Ok;
   }
   void release() override { ++releases; }
+  bool restartField() override { ++fieldRestarts; return true; }
 };
 struct Sink : Output {
   int epochs = 0;
@@ -235,7 +237,10 @@ void faultsAndHardDeadline() {
   CHECK(!validPnResponse(raw, sizeof(raw), 1));
   CHECK(!validPnResponse(raw, 3, 2));
   raw[1] = 1; CHECK(!validPnResponse(raw, sizeof(raw), 2));
+  CHECK(retryablePnRfError(raw, 2)); CHECK(!retryablePnRfError(raw, sizeof(raw)));
+  raw[1] = 0x0b; CHECK(retryablePnRfError(raw, 2));
   raw[1] = 0x40; CHECK(!validPnResponse(raw, sizeof(raw), 2));
+  CHECK(!retryablePnRfError(raw, 2));
   raw[1] = 0; raw[0] = 0x43; CHECK(!validPnResponse(raw, sizeof(raw), 2));
   std::cout << "PASS: lease/tap deadlines across clock wrap, removal gate, reader failures, old-epoch rejection and ECP CRC-A.\n";
 }
@@ -260,4 +265,39 @@ void channelScanning() {
   CHECK(single.probeDue(500, false) && single.current() == 11);
   std::cout << "PASS: preferred channel on reconnect, masked fallback, single channel and clock wrap.\n";
 }
-int main() { cryptoAndWire(); pairingAndRetries(); faultsAndHardDeadline(); channelScanning(); }
+void rfTimeoutRetriesOneFreshTap() {
+  Fixture f; f.bind();
+  const auto originalTap = f.tap();
+  const auto originalCommand = f.command();
+  f.reader.exchangeResult = ExchangeResult::RetryableRfError;
+  f.session.receive(600, originalCommand);
+  CHECK(f.sink.sent.back().code == Code::ReaderError);
+  CHECK(!f.session.active() && f.session.bound());
+  CHECK(f.session.prepareRetry(610)); CHECK(f.session.prepareRetry(700));
+  CHECK(f.reader.fieldRestarts == 1);
+  const uint8_t uid[]{1, 2, 3, 4};
+  CHECK(f.session.detected(710, uid, sizeof uid, {}, 0x20));
+  const auto newTap = f.sink.sent.back().tap;
+  CHECK(newTap == originalTap + 1);
+  f.session.receive(715, originalCommand);
+  CHECK(f.reader.exchanges == 1);
+  CHECK(f.sink.sent.back().tap == originalTap && f.sink.sent.back().code == Code::ReaderError);
+  auto nextCommand = f.command(3);
+  nextCommand.tap = newTap;
+  f.session.receive(720, nextCommand);
+  CHECK(f.reader.exchanges == 2);
+  CHECK(!f.session.prepareRetry(730)); CHECK(f.reader.fieldRestarts == 1);
+  CHECK(!f.session.detected(740, uid, sizeof uid, {}, 0x20));
+  f.session.presence(800, false); f.session.presence(1300, false);
+  CHECK(f.session.detected(1300, uid, sizeof uid, {}, 0x20));
+
+  Fixture expired; expired.bind(); expired.tap();
+  expired.reader.exchangeResult = ExchangeResult::RetryableRfError;
+  expired.session.receive(600, expired.command());
+  CHECK(expired.session.prepareRetry(610));
+  CHECK(!expired.session.prepareRetry(1210));
+  CHECK(!expired.session.detected(1210, uid, sizeof uid, {}, 0x20));
+  CHECK(expired.reader.fieldRestarts == 1);
+  std::cout << "PASS: an ISO-DEP timeout permits one fresh tap and preserves replay and removal checks.\n";
+}
+int main() { cryptoAndWire(); pairingAndRetries(); faultsAndHardDeadline(); channelScanning(); rfTimeoutRetriesOneFreshTap(); }

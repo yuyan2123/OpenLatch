@@ -57,8 +57,8 @@ void rollover_and_bad_configuration() {
 struct FakeReader : outdoor::Reader {
   int exchanges = 0;
   bool configure(const std::array<uint8_t,8>&) override { return true; }
-  bool exchange(const uint8_t*, size_t, uint8_t* response, size_t& size) override {
-    ++exchanges; response[0] = 0x90; response[1] = 0; size = 2; return true;
+  outdoor::ExchangeResult exchange(const uint8_t*, size_t, uint8_t* response, size_t& size) override {
+    ++exchanges; response[0] = 0x90; response[1] = 0; size = 2; return outdoor::ExchangeResult::Ok;
   }
   void release() override {}
 };
