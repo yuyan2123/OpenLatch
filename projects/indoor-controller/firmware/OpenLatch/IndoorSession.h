@@ -9,6 +9,11 @@ class IndoorSession {
   using Frame = outdoor::Frame;
   using Type = outdoor::Type;
   using Code = outdoor::Code;
+  struct Tag {
+    std::array<uint8_t, 10> uid{};
+    uint8_t length = 0, sak = 0;
+    uint32_t at = 0, admission = 0;
+  };
   static constexpr uint32_t kRetryMs = 800, kRequestMs = 1600, kLeaseMs = 5000, kTapMs = 5000;
   void reset() { bound_ = waiting_ = tagReady_ = active_ = responseReady_ = false; }
   bool configure(uint32_t now, const Frame& hello, const outdoor::Nonce& nonce,
@@ -30,7 +35,7 @@ class IndoorSession {
     if (!waiting_ || (sent_ && uint32_t(now - sentAt_) < kRetryMs)) return false;
     output = pending_; sent_ = true; sentAt_ = now; return true;
   }
-  void receive(uint32_t now, const Frame& frame) {
+  void receive(uint32_t now, const Frame& frame, uint32_t admission = 0) {
     tick(now);
     if (frame.outdoor != outdoor_ || frame.indoor != indoor_ || !frame.seq || frame.length > outdoor::kMaxPayload) return;
     if (bound_ && frame.type == Type::Tag && frame.code == Code::Ok && frame.tap > lastTap_ &&
@@ -38,6 +43,12 @@ class IndoorSession {
         frame.length == uint16_t(frame.payload[0] + 4)) {
       if (active_) return;
       lastTap_ = tap_ = frame.tap; tapAt_ = now; requestId_ = 0;
+      tag_ = {};
+      tag_.length = frame.payload[0];
+      std::copy_n(frame.payload.begin() + 1, tag_.length, tag_.uid.begin());
+      tag_.sak = frame.payload[tag_.length + 3];
+      tag_.at = now;
+      tag_.admission = admission;
       active_ = tagReady_ = true; return;
     }
     if (!waiting_) return;
@@ -49,7 +60,13 @@ class IndoorSession {
     if (pending_.type == Type::Configure) bound_ = true;
     if (exchange) { response_ = frame; responseReady_ = true; }
   }
-  bool takeTag(uint32_t now) { tick(now); const bool ready = tagReady_; tagReady_ = false; return ready; }
+  bool takeTag(uint32_t now, Tag* tag = nullptr) {
+    tick(now);
+    if (!tagReady_) return false;
+    if (tag) *tag = tag_;
+    tagReady_ = false;
+    return true;
+  }
   bool exchange(uint32_t now, const uint8_t* data, size_t length) {
     tick(now);
     if (!bound_ || !active_ || waiting_ || !data || length < 4 || length > outdoor::kMaxCommand ||
@@ -90,5 +107,6 @@ class IndoorSession {
   uint32_t tx_ = 0, lastTap_ = 0, tap_ = 0, requestId_ = 0;
   uint32_t requestAt_ = 0, sentAt_ = 0, leaseAt_ = 0, tapAt_ = 0;
   Frame pending_{}, response_{};
+  Tag tag_{};
 };
 }  // namespace door

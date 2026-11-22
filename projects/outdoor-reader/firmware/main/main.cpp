@@ -4,6 +4,7 @@
 #include "LanTransport.h"
 #include "Ecp.h"
 #include "PnReader.h"
+#include "TapLed.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -195,6 +196,8 @@ extern "C" void app_main() {
     return;
   }
   if (!setupRadio()) return;
+  static TapLed tapLed(GPIO_NUM_2, true);
+  if (!tapLed.begin()) ESP_LOGW(kLog, "Tap LED unavailable");
   static Hmac auth;
   static Codec codec(auth, credentials::indoorMac, credentials::outdoorMac);
   static LanTransport lan(credentials::hmacKey, false);
@@ -334,7 +337,8 @@ extern "C" void app_main() {
         if (present) pn.release();
       } else if (present) {
         tapStartedAt = nowMs();
-        if (!session.detected(tapStartedAt, uid.data(), uid.size(), atqa, sak)) pn.release();
+        if (session.detected(tapStartedAt, uid.data(), uid.size(), atqa, sak)) tapLed.flash();
+        else pn.release();
       }
     }
     vTaskDelay(pdMS_TO_TICKS(5));

@@ -41,7 +41,7 @@ def main():
         "url=https://github.com/rednblkx/DigitalDoorKey\narchitectures=esp32\n", encoding="utf-8")
     protocol = LIBRARIES / "OpenLatchNfc"
     (protocol / "src").mkdir(parents=True, exist_ok=True)
-    for name in ("Protocol.h", "LanTransport.h"):
+    for name in ("Protocol.h", "LanTransport.h", "TapLed.h"):
         shutil.copy2(ROOT.parent / "outdoor-reader/include" / name, protocol / "src" / name)
     (protocol / "library.properties").write_text(
         "name=OpenLatchNfc\nversion=1.0.0\nauthor=OpenLatch\nmaintainer=OpenLatch\n"

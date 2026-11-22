@@ -340,12 +340,73 @@ void password_modes_and_old_password() {
   CHECK(reboot.load(saved) == SettingsStore::Load::Loaded);
   CHECK(!saved.passwordRequired); CHECK(std::string(saved.setupPassword) == "ReplacementPassword");
 }
+void fob_learning_persistence_and_removal() {
+  Fixture f;
+  const door::RfidUid first{{0xAB, 0xCD, 0xEF, 0x12}, 4}, different{{4, 3, 2, 1}, 4};
+  fakeWeb->request("/api/rfid/learn", HTTP_POST); CHECK(fakeWeb->code == 403);
+  f.token();
+  fakeWeb->request("/api/rfid/learn", HTTP_POST); CHECK(fakeWeb->code == 409);
+  f.portal.nfcStatus(true, false, true, "wifi");
+  f.settings.passwordRequired = true;
+  fakeWeb->request("/api/rfid/learn", HTTP_POST); CHECK(fakeWeb->code == 403);
+  fakeWeb->inputHeaders["X-Setup-Password"] = door::kDefaultSetupPassword;
+  fakeMillis = 3000;
+  fakeWeb->request("/api/rfid/learn", HTTP_POST); CHECK(fakeWeb->code == 200); CHECK(f.fobs.learning());
+  CHECK(f.controller.nfc(fakeMillis, true) == door::Result::Inhibited);
+  fakeWeb->request("/api/ir/learn", HTTP_POST); CHECK(fakeWeb->code == 409);
+  fakeWeb->request("/api/rfid/forget", HTTP_POST); CHECK(fakeWeb->code == 409);
+  CHECK(!f.portal.receiveFob(fakeMillis += 500, first));
+  CHECK(!f.portal.receiveFob(fakeMillis += 500, different)); CHECK(f.fobs.count() == 0);
+  CHECK(!f.portal.receiveFob(fakeMillis += 500, first)); CHECK(f.fobs.count() == 1); CHECK(!f.fobs.learning());
+  fakeWeb->request("/api/status");
+  CHECK(fakeWeb->body.find("\"fob_count\":1,\"fob_capacity\":16") != std::string::npos);
+  CHECK(fakeWeb->body.find("ABCDEF12") == std::string::npos);
+  CHECK(f.portal.receiveFob(fakeMillis += 500, first)); CHECK(!f.portal.receiveFob(fakeMillis, different));
+  door::RfidFobs rebooted; CHECK(rebooted.begin()); CHECK(rebooted.count() == 1);
+  CHECK(rebooted.receive(fakeMillis, first) == door::RfidFobs::Event::Matched);
+  fakeWeb->arguments = {{"id", "0"}, {"key", "0"}};
+  fakeWeb->request("/api/rfid/remove", HTTP_POST); CHECK(fakeWeb->code == 409); CHECK(f.fobs.count() == 1);
+  fakeWeb->arguments["key"] = std::to_string(f.fobs.revision());
+  fakeWeb->request("/api/rfid/remove", HTTP_POST); CHECK(fakeWeb->code == 200); CHECK(f.fobs.count() == 0);
+  CHECK(!f.portal.receiveFob(fakeMillis, first));
+}
+void fob_capacity_timeout_and_storage_failure() {
+  Fixture f;
+  using Event = door::RfidFobs::Event;
+  const door::RfidUid first{{1, 2, 3, 4}, 4};
+  CHECK(f.fobs.learn(0));
+  CHECK(f.fobs.receive(500, first) == Event::Captured);
+  CHECK(f.fobs.receive(30000, first) == Event::TimedOut); CHECK(!f.fobs.count());
+  CHECK(f.fobs.learn(30000)); CHECK(f.fobs.receive(30500, first) == Event::Captured);
+  f.fobs.cancel(); CHECK(f.fobs.receive(31000, first) == Event::Ignored);
+  CHECK(f.fobs.learn(31000)); CHECK(f.fobs.receive(31500, first) == Event::Captured);
+  CHECK(f.fobs.receive(32000, first) == Event::Learned);
+  CHECK(f.fobs.learn(32000)); CHECK(f.fobs.receive(32500, first) == Event::Captured);
+  CHECK(f.fobs.receive(33000, first) == Event::Duplicate); CHECK(f.fobs.count() == 1);
+  for (uint8_t slot = 1; slot < door::RfidFobs::kCapacity; ++slot) {
+    const door::RfidUid uid{{4, 5, 6, slot, 3, 2, 1}, 7};
+    const uint32_t started = 33000 + slot * 1000;
+    CHECK(f.fobs.learn(started)); CHECK(f.fobs.receive(started + 500, uid) == Event::Captured);
+    CHECK(f.fobs.receive(started + 1000, uid) == Event::Learned);
+  }
+  CHECK(f.fobs.count() == 16); CHECK(!f.fobs.learn(50000));
+  CHECK(f.fobs.remove(15)); CHECK(f.fobs.learn(50000));
+  const door::RfidUid replacement{{1, 2, 3, 5}, 4};
+  CHECK(f.fobs.receive(50500, replacement) == Event::Captured);
+  nvsCommitFails = true;
+  CHECK(f.fobs.receive(51000, replacement) == Event::StorageError);
+  CHECK(!f.fobs.ready()); CHECK(f.fobs.receive(51500, first) == Event::Ignored);
+  nvsCommitFails = false;
+  f.token(); fakeWeb->request("/api/rfid/forget", HTTP_POST); CHECK(fakeWeb->code == 200);
+  CHECK(f.fobs.ready()); CHECK(!f.fobs.count());
+}
 int main() {
   password_modes_and_old_password();
   authentication_and_request_guards(); browser_learning_and_forget();
   expiry_and_late_offline_recovery(); save_validation_and_restart(); relay_time_validation(); nfc_limits_validation_and_status();
   setup_button_learning_and_reopening(); activity_and_status_polling();
   multiple_buttons_removal_and_conflicts(); full_button_list_is_rejected();
+  fob_learning_persistence_and_removal(); fob_capacity_timeout_and_storage_failure();
   ota_route_guards(); ota_success_stops_all_release_sources(); ota_abort_and_verification_failure();
-  std::cout << "PASS: no-login routes, CSRF guards, independent IR buttons, activity windows, AP recovery and save/restart.\n";
+  std::cout << "PASS: setup authorization, IR buttons, RFID learning/storage, activity windows, AP recovery and save/restart.\n";
 }

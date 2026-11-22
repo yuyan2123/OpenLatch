@@ -15,19 +15,21 @@ struct Fixture {
   MemoryIr irStore, setupIrStore;
   door::Infrared ir{irStore};
   door::Infrared setupIr{setupIrStore};
+  door::RfidFobs fobs;
   TimedRelay relay;
   door::Controller controller{relay};
   door::NfcAttemptLimiter nfcAttempts;
-  SetupPortal portal{settings, store, ir, setupIr, controller, relay, nfcAttempts};
+  SetupPortal portal{settings, store, ir, setupIr, fobs, controller, relay, nfcAttempts};
   Fixture(bool credentials = false) {
     fakeMillis = 0; WiFi = {};
     resetOta();
     nvsRecord.clear(); nvsPending.clear(); nvsWrites = 0;
+    nvsFobRecord.clear(); nvsFobPending.clear();
     nvsOpenFails = nvsReadFails = nvsWriteFails = nvsCommitFails = nvsCorruptReadback = false;
     std::strcpy(settings.pairingCode, "59263814"); std::strcpy(settings.setupPassword, door::kDefaultSetupPassword);
     if (credentials) { std::strcpy(settings.ssid, "Home"); std::strcpy(settings.wifiPassword, "secretpass"); }
     CHECK(store.load(settings) == SettingsStore::Load::Missing); CHECK(store.save(settings));
-    CHECK(relay.begin()); controller.boot(0); CHECK(ir.begin(0)); CHECK(setupIr.begin(0));
+    CHECK(relay.begin()); controller.boot(0); CHECK(ir.begin(0)); CHECK(setupIr.begin(0)); CHECK(fobs.begin());
     nfcAttempts.begin();
     portal.begin(0, true, true);
   }

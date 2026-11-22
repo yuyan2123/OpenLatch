@@ -8,6 +8,7 @@
 #include "SetupPolicy.h"
 #include "SetupPage.h"
 #include "Infrared.h"
+#include "RfidFobs.h"
 #include "TimedRelay.h"
 #include "EspFirmwareSink.h"
 #include "FirmwareBoot.h"
@@ -16,9 +17,9 @@
 class SetupPortal {
  public:
   SetupPortal(door::DeviceSettings& settings, SettingsStore& store, door::Infrared& infrared,
-              door::Infrared& setupInfrared,
+              door::Infrared& setupInfrared, door::RfidFobs& fobs,
               door::Controller& controller, TimedRelay& relay, door::NfcAttemptLimiter& nfcAttempts)
-      : settings_(settings), store_(store), infrared_(infrared), setupInfrared_(setupInfrared),
+      : settings_(settings), store_(store), infrared_(infrared), setupInfrared_(setupInfrared), fobs_(fobs),
         controller_(controller), relay_(relay), nfcAttempts_(nfcAttempts) {}
 
   void begin(uint32_t bootAt, bool storageReady, bool hardwareReady) {
@@ -42,19 +43,33 @@ class SetupPortal {
     });
     server_.on("/api/settings", HTTP_POST, [this]() { if (authorize(true)) saveSettings(); });
     server_.on("/api/firmware", HTTP_POST, [this]() { finishFirmware(); }, [this]() { receiveFirmware(); });
+    server_.on("/api/rfid/learn", HTTP_POST, [this]() { if (authorize(true)) learnFob(); });
+    server_.on("/api/rfid/remove", HTTP_POST, [this]() { if (authorize(true)) removeFob(); });
+    server_.on("/api/rfid/cancel", HTTP_POST, [this]() {
+      if (!authorize(true)) return;
+      fobs_.cancel();
+      controller_.inhibit(millis(), learning());
+      lastFobEvent_ = "Learning cancelled. Saved fobs retained.";
+      message(200, lastFobEvent_);
+    });
+    server_.on("/api/rfid/forget", HTTP_POST, [this]() {
+      if (!authorize(true)) return;
+      if (learning()) { message(409, "Finish or cancel learning before clearing fobs."); return; }
+      changeFobs(true);
+    });
     server_.on("/api/ir/learn", HTTP_POST, [this]() { if (authorize(true)) learn(); });
     server_.on("/api/ir/remove", HTTP_POST, [this]() { if (authorize(true)) removeButton(false); });
     server_.on("/api/setup-ir/remove", HTTP_POST, [this]() { if (authorize(true)) removeButton(true); });
     server_.on("/api/ir/cancel", HTTP_POST, [this]() {
       if (!authorize(true)) return;
       infrared_.cancel(millis());
-      controller_.inhibit(millis(), irLearning());
+      controller_.inhibit(millis(), learning());
       lastIrEvent_ = "Learning cancelled. Saved buttons retained.";
       message(200, lastIrEvent_);
     });
     server_.on("/api/ir/forget", HTTP_POST, [this]() {
       if (!authorize(true)) return;
-      if (setupInfrared_.learning()) { message(409, "Cancel setup button learning first."); return; }
+      if (setupInfrared_.learning() || fobs_.learning()) { message(409, "Cancel the other learning session first."); return; }
       relay_.permitInfrared(false);
       const bool saved = infrared_.forget(millis());
       controller_.inhibit(millis(), false);
@@ -65,7 +80,7 @@ class SetupPortal {
     server_.on("/api/setup-ir/learn", HTTP_POST, [this]() {
       if (!authorize(true)) return;
       if (setupInfrared_.count() >= door::kIrMaxKeys) { message(409, "Setup button list is full. Remove a button before adding another."); return; }
-      if (irLearning() || !hardwareReady_ || controller_.faulted() || !setupInfrared_.learn(millis())) {
+      if (learning() || !hardwareReady_ || controller_.faulted() || !setupInfrared_.learn(millis())) {
         message(409, "Learning is unavailable. Finish learning or check hardware and storage."); return;
       }
       controller_.inhibit(millis(), true);
@@ -76,15 +91,15 @@ class SetupPortal {
     server_.on("/api/setup-ir/cancel", HTTP_POST, [this]() {
       if (!authorize(true)) return;
       setupInfrared_.cancel(millis());
-      controller_.inhibit(millis(), irLearning());
+      controller_.inhibit(millis(), learning());
       lastSetupIrEvent_ = "Learning cancelled. Saved setup buttons retained.";
       message(200, lastSetupIrEvent_);
     });
     server_.on("/api/setup-ir/forget", HTTP_POST, [this]() {
       if (!authorize(true)) return;
-      if (infrared_.learning()) { message(409, "Cancel door button learning first."); return; }
+      if (infrared_.learning() || fobs_.learning()) { message(409, "Cancel the other learning session first."); return; }
       const bool saved = setupInfrared_.forget(millis());
-      controller_.inhibit(millis(), irLearning());
+      controller_.inhibit(millis(), learning());
       lastSetupIrEvent_ = saved ? "All setup buttons cleared. Use the boot window to learn new buttons." :
                                  "Erase failed. Setup button disabled; retry before restarting.";
       message(saved ? 200 : 500, lastSetupIrEvent_);
@@ -102,6 +117,7 @@ class SetupPortal {
     firmware_.tick(now);
     if (infrared_.tick(now)) noteIrEvent(door::IrEvent::TimedOut);
     if (setupInfrared_.tick(now)) noteSetupIrEvent(door::IrEvent::TimedOut);
+    if (fobs_.tick(now)) noteFobEvent(door::RfidFobs::Event::TimedOut);
     pollNetwork();
     if (apActive_) dns_.processNextRequest();
     if (webActive_) server_.handleClient();
@@ -117,14 +133,21 @@ class SetupPortal {
   bool restartDue(uint32_t now) const { return restarting_ && uint32_t(now - restartAt_) >= 1000; }
   const char* hostname() const { return hostname_; }
   bool irLearning() const { return infrared_.learning() || setupInfrared_.learning(); }
+  bool learning() const { return irLearning() || fobs_.learning(); }
+  bool receiveFob(uint32_t now, const door::RfidUid& uid) {
+    const auto event = fobs_.receive(now, uid);
+    noteFobEvent(event);
+    return event == door::RfidFobs::Event::Matched;
+  }
   // Feed every decoded frame to both filters so held buttons cannot rearm.
   // A setup frame is consumed here and can never request a relay pulse.
   door::IrEvent receiveIr(uint32_t now, const door::IrKey& input, bool repeat = false, bool invalid = false) {
     const bool doorLearning = infrared_.learning(), setupLearning = setupInfrared_.learning();
     const bool conflict = !invalid && !repeat && input.valid() &&
         ((doorLearning && setupInfrared_.contains(input)) || (setupLearning && infrared_.contains(input)));
-    const auto setupEvent = setupInfrared_.receive(now, input, repeat, invalid || conflict || doorLearning || restarting_);
-    const auto event = infrared_.receive(now, input, repeat, invalid || conflict || setupLearning || restarting_);
+    const bool blocked = invalid || conflict || fobs_.learning() || restarting_;
+    const auto setupEvent = setupInfrared_.receive(now, input, repeat, blocked || doorLearning);
+    const auto event = infrared_.receive(now, input, repeat, blocked || setupLearning);
     noteIrEvent(event);
     noteSetupIrEvent(setupEvent);
     if (conflict) {
@@ -153,6 +176,18 @@ class SetupPortal {
   }
 
  private:
+  void noteFobEvent(door::RfidFobs::Event event) {
+    using Event = door::RfidFobs::Event;
+    switch (event) {
+      case Event::Captured: lastFobEvent_ = "First tap captured. Remove the fob for 500 ms, then tap it again."; break;
+      case Event::Mismatch: lastFobEvent_ = "Different fob detected. Tap the first fob again."; break;
+      case Event::Learned: lastFobEvent_ = "Fob saved. Remove it, then tap it again to open the door."; break;
+      case Event::Duplicate: lastFobEvent_ = "This fob is already saved."; break;
+      case Event::StorageError: lastFobEvent_ = "Fob storage failed. Use Clear all fobs to repair."; break;
+      case Event::TimedOut: lastFobEvent_ = "Learning timed out. Saved fobs retained."; break;
+      default: break;
+    }
+  }
   void noteSetupIrEvent(door::IrEvent event) {
     switch (event) {
       case door::IrEvent::Captured: lastSetupIrEvent_ = "First press captured. Release for 500 ms, then press the same button again."; break;
@@ -200,10 +235,14 @@ class SetupPortal {
       if (irLearning()) {
         infrared_.cancel(now);
         setupInfrared_.cancel(now);
-        controller_.inhibit(now, restarting_);
         lastIrEvent_ = "Setup window closed. Learning cancelled; previous button retained.";
         lastSetupIrEvent_ = lastIrEvent_;
       }
+      if (fobs_.learning()) {
+        fobs_.cancel();
+        lastFobEvent_ = "Setup window closed. Learning cancelled. Saved fobs retained.";
+      }
+      controller_.inhibit(now, restarting_ || updating());
       Serial.println("setup_web: closed; press the learned setup IR button or restart to reopen");
     }
   }
@@ -279,7 +318,7 @@ class SetupPortal {
     if (upload.status == RAW_START) {
       firmwareRequest_ = false;
       if (!authorizeFirmware()) { server_.client().stop(); return; }
-      if (irLearning() || updating()) { message(409, "Finish button learning or the current update first."); server_.client().stop(); return; }
+      if (learning() || updating()) { message(409, "Finish learning or the current update first."); server_.client().stop(); return; }
       const int length = server_.clientContentLength();
       if (!firmware_.capacity()) { message(409, "OTA partitions are unavailable. Install the OTA firmware over USB first."); server_.client().stop(); return; }
       if (length < 288 || size_t(length) > firmware_.capacity()) {
@@ -296,7 +335,7 @@ class SetupPortal {
       policy_.noteActivity(millis());
     } else if (upload.status == RAW_ABORTED) {
       firmware_.cancel();
-      controller_.inhibit(millis(), irLearning() || restarting_);
+      controller_.inhibit(millis(), learning() || restarting_);
     }
   }
   void finishFirmware() {
@@ -304,7 +343,7 @@ class SetupPortal {
     if (!firmwareRequest_) { message(400, "No firmware image was received."); return; }
     firmwareRequest_ = false;
     if (!firmware_.finish(millis())) {
-      controller_.inhibit(millis(), irLearning() || restarting_);
+      controller_.inhibit(millis(), learning() || restarting_);
       message(400, firmware_.error() ? firmware_.error() : "Firmware update failed."); return;
     }
     restarting_ = true; restartAt_ = millis();
@@ -353,7 +392,7 @@ class SetupPortal {
     return json + "]";
   }
   void removeButton(bool setup) {
-    if (irLearning()) { message(409, "Finish or cancel button learning before removing a button."); return; }
+    if (learning()) { message(409, "Finish or cancel learning before removing a button."); return; }
     const String id = server_.arg("id");
     if (!id.length() || id.length() > 2 || !server_.hasArg("key")) { message(400, "Missing or invalid button ID and key."); return; }
     uint8_t slot = 0;
@@ -374,6 +413,49 @@ class SetupPortal {
     if (setup) lastSetupIrEvent_ = result;
     else lastIrEvent_ = result;
     message(saved ? 200 : 500, result);
+  }
+  void learnFob() {
+    if (fobs_.count() >= door::RfidFobs::kCapacity) { message(409, "Fob list is full. Remove a fob first."); return; }
+    if (learning() || !hardwareReady_ || controller_.faulted() || !nfcConnected_ || !fobs_.learn(millis())) {
+      message(409, "Learning is unavailable. Check the reader connection and storage."); return;
+    }
+    controller_.inhibit(millis(), true);
+    relay_.permitInfrared(false);
+    relay_.permitNfc(false);
+    lastFobEvent_ = "Tap the same fob twice within 30 seconds. Remove it for 500 ms between taps.";
+    message(200, lastFobEvent_);
+  }
+  void removeFob() {
+    if (learning()) { message(409, "Finish or cancel learning before removing a fob."); return; }
+    const String id = server_.arg("id");
+    if (!id.length() || id.length() > 2 || !server_.hasArg("key")) { message(400, "Missing or invalid fob ID."); return; }
+    uint8_t slot = 0;
+    for (size_t i = 0; i < id.length(); ++i) {
+      if (id[i] < '0' || id[i] > '9') { message(400, "Invalid fob ID."); return; }
+      slot = slot * 10 + uint8_t(id[i] - '0');
+    }
+    if (!fobs_.has(slot)) { message(404, "Fob no longer exists. Refresh the list."); return; }
+    if (server_.arg("key") != String(fobs_.revision())) { message(409, "Fob list changed. Refresh and try again."); return; }
+    changeFobs(false, slot);
+  }
+  void changeFobs(bool clear, uint8_t slot = 0) {
+    controller_.inhibit(millis(), true);
+    relay_.permitNfc(false);
+    const bool saved = clear ? fobs_.clear() : fobs_.remove(slot);
+    controller_.inhibit(millis(), false);
+    lastFobEvent_ = !saved ? "Fob storage failed. Use Clear all fobs to repair." :
+        clear ? "All fobs cleared." : "Fob removed.";
+    message(saved ? 200 : 500, lastFobEvent_);
+  }
+  String fobList() const {
+    String json = "[";
+    const String revision = quoted(String(fobs_.revision()));
+    for (uint8_t slot = 0; slot < door::RfidFobs::kCapacity; ++slot) {
+      if (!fobs_.has(slot)) continue;
+      if (json.length() > 1) json += ",";
+      json += String("{\"id\":") + String(slot) + ",\"key\":" + revision + "}";
+    }
+    return json + "]";
   }
   void status() {
     const bool connected = WiFi.status() == WL_CONNECTED;
@@ -410,6 +492,10 @@ class SetupPortal {
     json += String(",\"nfc_provisioned\":") + (nfcProvisioned_ ? "true" : "false");
     json += String(",\"nfc_connected\":") + (nfcConnected_ ? "true" : "false");
     json += ",\"nfc_transport\":" + quoted(nfcTransport_);
+    json += String(",\"fob_ready\":") + (fobs_.ready() ? "true" : "false");
+    json += String(",\"fob_learning\":") + (fobs_.learning() ? "true" : "false");
+    json += ",\"fob_count\":" + String(fobs_.count()) + ",\"fob_capacity\":" + String(door::RfidFobs::kCapacity);
+    json += ",\"fobs\":" + fobList() + ",\"fob_event\":" + quoted(lastFobEvent_);
     json += String(",\"default_password\":") + (!strcmp(settings_.setupPassword, door::kDefaultSetupPassword) ? "true" : "false");
     json += String(",\"settings_ready\":") + (storageReady_ ? "true" : "false");
     json += String(",\"hardware_ready\":") + (hardwareReady_ && !controller_.faulted() ? "true" : "false");
@@ -436,7 +522,7 @@ class SetupPortal {
   }
   void learn() {
     if (infrared_.count() >= door::kIrMaxKeys) { message(409, "Door button list is full. Remove a button before adding another."); return; }
-    if (irLearning() || !hardwareReady_ || controller_.faulted() || !infrared_.learn(millis())) {
+    if (learning() || !hardwareReady_ || controller_.faulted() || !infrared_.learn(millis())) {
       message(409, "Learning is unavailable. Check hardware and storage status."); return;
     }
     controller_.inhibit(millis(), true);
@@ -445,7 +531,7 @@ class SetupPortal {
     message(200, lastIrEvent_);
   }
   void saveSettings() {
-    if (irLearning()) { message(409, "Finish or cancel infrared learning before saving settings."); return; }
+    if (learning()) { message(409, "Finish or cancel learning before saving settings."); return; }
     if (!server_.hasArg("ssid") || !server_.hasArg("wifi_password") || !server_.hasArg("setup_password")) {
       message(400, "Missing settings fields."); return;
     }
@@ -499,6 +585,7 @@ class SetupPortal {
   SettingsStore& store_;
   door::Infrared& infrared_;
   door::Infrared& setupInfrared_;
+  door::RfidFobs& fobs_;
   door::Controller& controller_;
   TimedRelay& relay_;
   door::NfcAttemptLimiter& nfcAttempts_;
@@ -513,6 +600,7 @@ class SetupPortal {
   char hostname_[40]{}, apName_[32]{}, token_[33]{};
   const char* lastIrEvent_ = "Ready. Start learning to register an unlock button.";
   const char* lastSetupIrEvent_ = "Not set. Learn a setup button here during the boot window.";
+  const char* lastFobEvent_ = "";
   bool webActive_ = false, apActive_ = false, storageReady_ = false, hardwareReady_ = false;
   bool restarting_ = false;
   bool nfcConfigured_ = false, nfcProvisioned_ = false, nfcConnected_ = false;

@@ -42,7 +42,7 @@ struct TestOutput : outdoor::Output {
 struct Fixture {
   HomeKeyStore store; door::NfcAttemptLimiter attempts; HomeKeyManager manager{store,attempts};
   TestReader reader; TestOutput output; outdoor::ReaderSession outside{reader,output};
-  explicit Fixture(bool preferWifi = false) {
+  explicit Fixture(bool preferWifi = false, bool provisionHomeKey = true) {
     fakeMillis=0;WiFi={};WiFi.connected=true;fakeQueues.clear();fakeReceive=nullptr;
     fakeQueueFailure=fakeTaskFailure=fakeRadioFailure=fakeSendFailure=fakeShaFailure=false;
     fakeRadioStarts=fakeProfileRuns=0;fakeCredentialValid=true;fakeProfileStalls=false;fakeDelayHook={};fakeVerificationHook={};fakeProvisionHook={};
@@ -60,7 +60,8 @@ struct Fixture {
     ddk::Issuer issuer;issuer.id.assign(hash,hash+8);issuer.public_key.assign(32,6);
     ddk::Endpoint endpoint;endpoint.id.assign(6,7);endpoint.public_key.assign(65,4);
     endpoint.public_key_x.assign(32,8);endpoint.persistent_key.assign(32,9);issuer.endpoints.push_back(endpoint);
-    store.issuerList().push_back(issuer);store.save();CHECK(store.provisioned());manager.enabled(true);
+    if (provisionHomeKey) { store.issuerList().push_back(issuer);store.save();CHECK(store.provisioned()); }
+    manager.enabled(true);
     fakeRadioSend=[this](const uint8_t* bytes,size_t size){outdoor::Frame frame;CHECK(output.codec.decode(bytes,size,true,frame));outside.receive(fakeMillis,frame);};
     outside.begin(0);CHECK(manager.poll()>0);
     if (preferWifi) {
@@ -76,10 +77,10 @@ struct Fixture {
     outside.hello();manager.poll();manager.poll();CHECK(manager.connected());
     homeKeyControllersPending=false;
   }
-  void tap() {
+  void tap(uint8_t sak = 0x20, uint8_t firstByte = 1) {
     manager.poll();manager.poll();
     outside.presence(fakeMillis,false);fakeMillis+=500;outside.presence(fakeMillis,false);
-    const uint8_t uid[]{1,2,3,4};CHECK(outside.detected(fakeMillis,uid,sizeof(uid),{},0x20));manager.poll();manager.poll();
+    const uint8_t uid[]{firstByte,2,3,4};CHECK(outside.detected(fakeMillis,uid,sizeof(uid),{},sak));manager.poll();manager.poll();
   }
 };
 void verified_results_are_single_use_and_expire() {
@@ -132,6 +133,21 @@ void tag_before_ping_ack_is_not_discarded() {
   const uint8_t uid[]{1,2,3,4};CHECK(f.outside.detected(fakeMillis,uid,sizeof(uid),{},0x20));
   f.manager.poll();CHECK(fakeProfileRuns==0);
   f.manager.poll();CHECK(fakeProfileRuns==1);CHECK(f.manager.takeVerified(fakeMillis));
+}
+void physical_fobs_use_fresh_paired_taps_without_home_key() {
+  Fixture f(true, false);
+  door::RfidUid uid;
+  CHECK(!f.manager.provisioned());
+  f.manager.fobAdmission(1, true);
+  f.tap(0x08);
+  CHECK(f.manager.takeFob(fakeMillis, uid)); CHECK(uid.length == 4 && uid.bytes[0] == 1);
+  CHECK(!f.manager.takeFob(fakeMillis, uid));
+  f.tap(0x08); CHECK(!f.manager.takeFob(fakeMillis + 250, uid));
+  f.tap(0x08); f.manager.fobAdmission(2, true); CHECK(!f.manager.takeFob(fakeMillis, uid));
+  f.tap(0x08, 0x08); CHECK(!f.manager.takeFob(fakeMillis, uid)); // Random UID.
+  f.tap(0x20); CHECK(!f.manager.takeFob(fakeMillis, uid)); // ISO-DEP target.
+  CHECK(!f.manager.takeVerified(fakeMillis)); CHECK(f.reader.exchanges == 0);
+  CHECK(f.attempts.failures(fakeMillis) == 0);
 }
 void pairing_changes_revoke_pending_results() {
   Fixture f;f.tap();const uint32_t generation=f.store.generation();
@@ -191,5 +207,6 @@ void initialization_and_traffic_failures() {
 int main() {
   verified_results_are_single_use_and_expire();wifi_takes_priority_and_completes_one_tap();invalid_and_aborted_attempts_are_separate();tag_before_ping_ack_is_not_discarded();pairing_changes_revoke_pending_results();
   provisioning_is_bounded_and_storage_failure_is_closed();reader_key_query_before_provisioning_returns_empty_tlv();initialization_and_traffic_failures();
+  physical_fobs_use_fresh_paired_taps_without_home_key();
   std::cout<<"PASS: actual NFC manager/services, paired APDU transport, result expiry/revocation, limits, provisioning and radio/queue/task failures.\n";
 }

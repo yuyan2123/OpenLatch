@@ -16,6 +16,7 @@
 #include "HomeKeyStore.h"
 #include "HomeKeyCrypto.h"
 #include "NfcAttemptLimiter.h"
+#include "RfidFobs.h"
 #include "ddk/homekey/ProfileFactory.h"
 #include "ddk/transport/NfcChannel.h"
 #if defined(DOOR_NATIVE_NFC_TEST)
@@ -44,13 +45,24 @@ class HomeKeyManager {
     uint8_t mac[6]{}; if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK ||
         std::memcmp(mac, credentials::indoorMac.data(), 6)) return false;
     inbox_ = xQueueCreate(8, sizeof(Received)); verified_ = xQueueCreate(1, sizeof(Verified));
-    if (!inbox_ || !verified_) return false;
+    fobs_ = xQueueCreate(1, sizeof(door::IndoorSession::Tag));
+    if (!inbox_ || !verified_ || !fobs_) return false;
     instance_ = this;
     configured_ = true;
     if (xTaskCreate(workerEntry, "homekey", 14336, this, 1, nullptr) != pdPASS) { configured_ = false; return false; }
     return true;
   }
   void enabled(bool value) { if (enabled_.exchange(value) && !value) ++admission_; }
+  // The loop supplies the list revision and current permission as one snapshot.
+  void fobAdmission(uint32_t revision, bool accept) { fobAdmission_ = (revision << 1) | uint32_t(accept); }
+  bool takeFob(uint32_t now, door::RfidUid& uid) {
+    door::IndoorSession::Tag tag;
+    if (!fobs_ || xQueueReceive(fobs_, &tag, 0) != pdTRUE ||
+        !(tag.admission & 1) || tag.admission != fobAdmission_ ||
+        uint32_t(now - tag.at) >= 250 || !connected() || WiFi.status() != WL_CONNECTED) return false;
+    uid = {tag.uid, tag.length};
+    return true;
+  }
   bool configured() const { return configured_; }
   bool provisioned() const { return provisioned_; }
   bool connected() const { return connectedLink_ != outdoor::Link::None; }
@@ -119,7 +131,8 @@ class HomeKeyManager {
       if (session_.configure(millis(), frame_, nonce, group_)) { link_ = link; lanPeer_ = peer; }
       return;
     }
-    if (link == link_ && (link != outdoor::Link::Wifi || peer == lanPeer_)) session_.receive(millis(), frame_);
+    if (link == link_ && (link != outdoor::Link::Wifi || peer == lanPeer_))
+      session_.receive(millis(), frame_, fobAdmission_);
   }
   void pump() {
     const uint32_t now = millis();
@@ -200,20 +213,31 @@ class HomeKeyManager {
       std::unique_lock<std::mutex> lock(store_.mutex, std::try_to_lock);
       if (!lock) return 5;
       provisioned_ = store_.provisioned();
-      if (!provisioned_) { session_.reset(); connectedLink_ = outdoor::Link::None; }
-      else if (store_.generation() != generation_) {
-        const auto& id = store_.reader_identity().group_identifier;
-        std::array<uint8_t,8> group{}; std::copy(id.begin(), id.end(), group.begin());
+      if (!provisioned_ || store_.generation() != generation_) {
+        // A zero group keeps the paired reader available before Apple Home setup.
+        std::array<uint8_t,8> group{};
+        if (provisioned_) {
+          const auto& id = store_.reader_identity().group_identifier;
+          std::copy(id.begin(), id.end(), group.begin());
+        }
         if (group != group_) { session_.reset(); group_ = group; }
         generation_ = store_.generation();
       }
     }
-    if (!provisioned_) return 50;
     pump();
     // A Tag may arrive before an outstanding Ping ACK. Keep it pending until
     // that request completes; consuming it early would discard a valid tap.
-    if (!session_.waiting() && session_.takeTag(millis())) {
-      if (enabled_) authenticate(); else session_.release(millis());
+    door::IndoorSession::Tag tag;
+    if (!session_.waiting() && session_.takeTag(millis(), &tag)) {
+      // Reserve ISO-DEP targets for the Home Key APDU path.
+      if (tag.sak & 0x20) {
+        if (provisioned_ && enabled_) authenticate();
+        else session_.release(millis());
+      } else {
+        if ((tag.admission & 1) && tag.admission == fobAdmission_ && door::RfidUid{tag.uid, tag.length}.valid())
+          (void)xQueueSend(fobs_, &tag, 0);
+        session_.release(millis());
+      }
     } else if (uint32_t(millis() - pingAt_) >= 1000 && session_.ping(millis())) pingAt_ = millis();
     return 5;
   }
@@ -232,11 +256,12 @@ class HomeKeyManager {
   std::atomic<outdoor::Link> connectedLink_{outdoor::Link::None};
   uint32_t lanAttemptAt_ = uint32_t(0) - 1000;
   bool lanListening_ = false;
-  QueueHandle_t inbox_ = nullptr, verified_ = nullptr;
+  QueueHandle_t inbox_ = nullptr, verified_ = nullptr, fobs_ = nullptr;
   Received incoming_{}; outdoor::Frame frame_{}, outgoing_{}, response_{}; outdoor::Wire wire_{};
   std::array<uint8_t,8> group_{};
   std::atomic<bool> enabled_{false}, configured_{false}, provisioned_{false};
   std::atomic<uint32_t> admission_{0};
+  std::atomic<uint32_t> fobAdmission_{0};
   uint32_t attemptAdmission_ = 0;
   bool transportError_ = false, radio_ = false;
   uint32_t pingAt_ = 0, generation_ = std::numeric_limits<uint32_t>::max();

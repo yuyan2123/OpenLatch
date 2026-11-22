@@ -75,7 +75,7 @@ class Controller {
     if (!matched) return Result::IrDisabled;
     return release(now, Source::Infrared);
   }
-  // Only a fresh result from the indoor HomeKey verifier may set verified=true.
+  // Only the indoor Home Key verifier or the saved RFID fob matcher may approve.
   Result nfc(uint32_t now, bool verified = false) {
     tick(now);
     if (!verified) return Result::Unauthorized;

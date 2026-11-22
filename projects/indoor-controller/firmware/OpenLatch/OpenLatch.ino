@@ -7,6 +7,7 @@
 #include <atomic>
 #include "Controller.h"
 #include "TimedRelay.h"
+#include <TapLed.h>
 #include "IrInput.h"
 #include "IrStore.h"
 #include "SerialLine.h"
@@ -25,6 +26,8 @@
 #endif
 
 TimedRelay relay;
+constexpr gpio_num_t kNfcLedPin = GPIO_NUM_8;
+TapLed nfcLed(kNfcLedPin, false);
 door::Controller controller(relay);
 IrStore irStore;
 door::Infrared infrared(irStore);
@@ -34,9 +37,10 @@ SerialLine serialLine;
 door::DeviceSettings settings;
 SettingsStore settingsStore;
 door::NfcAttemptLimiter nfcAttempts;
+door::RfidFobs fobs;
 HomeKeyStore homeKeyStore;
 HomeKeyManager homeKey(homeKeyStore, nfcAttempts);
-SetupPortal setupPortal(settings, settingsStore, infrared, setupInfrared, controller, relay, nfcAttempts);
+SetupPortal setupPortal(settings, settingsStore, infrared, setupInfrared, fobs, controller, relay, nfcAttempts);
 std::atomic<bool> networkLost{false};
 bool hardwareReady = false;
 bool homekitStarted = false;
@@ -88,9 +92,58 @@ void syncConnectivity() {
 }
 
 void syncInfrared() {
-  controller.inhibit(millis(), setupPortal.irLearning() || setupPortal.restarting() || setupPortal.updating());
-  relay.permitInfrared(hardwareReady && infrared.enabled() && !setupPortal.irLearning() &&
+  controller.inhibit(millis(), setupPortal.learning() || setupPortal.restarting() || setupPortal.updating());
+  relay.permitInfrared(hardwareReady && infrared.enabled() && !setupPortal.learning() &&
                        !controller.faulted() && !setupPortal.restarting() && !setupPortal.updating());
+}
+
+bool syncNfc() {
+  const bool available = hardwareReady && !controller.faulted() && !setupPortal.restarting() && !setupPortal.updating();
+  const bool unlockAllowed = available && !setupPortal.learning();
+  homeKey.enabled(unlockAllowed);
+  relay.permitNfc(unlockAllowed);
+  homeKey.fobAdmission(fobs.revision(), available && fobs.ready() && !setupPortal.irLearning() &&
+                       (fobs.learning() || fobs.count() > 0));
+  return unlockAllowed;
+}
+
+void releaseFromNfc(const char* credential) {
+  const auto result = controller.nfc(millis(), true);
+  if (result == door::Result::Accepted) nfcLed.flash();
+  Serial.printf("command_received: %s; result=%s\n", credential, door::name(result));
+}
+
+bool initializeNfcLed() {
+  nvs_handle_t handle;
+  if (nvs_open("door_led", NVS_READONLY, &handle) == ESP_OK) {
+    uint8_t activeHigh = 0;
+    if (nvs_get_u8(handle, "active_high", &activeHigh) == ESP_OK) nfcLed.setActiveHigh(activeHigh == 1);
+    nvs_close(handle);
+  }
+  return nfcLed.begin() && gpio_input_enable(kNfcLedPin) == ESP_OK;
+}
+
+void ledStatus() {
+  gpio_io_config_t config{};
+  if (gpio_get_io_config(kNfcLedPin, &config) == ESP_OK)
+    Serial.printf("nfc_led: gpio=8 active=%s level=%d output=%d\n",
+                  nfcLed.activeHigh() ? "high" : "low", gpio_get_level(kNfcLedPin), config.oe);
+}
+
+void setNfcLedPolarity(bool activeHigh) {
+  const bool previous = nfcLed.activeHigh();
+  if (!nfcLed.setActiveHigh(activeHigh)) { Serial.println("nfc_led: busy"); return; }
+  nvs_handle_t handle;
+  bool saved = false;
+  if (nvs_open("door_led", NVS_READWRITE, &handle) == ESP_OK) {
+    saved = nvs_set_u8(handle, "active_high", uint8_t(activeHigh)) == ESP_OK && nvs_commit(handle) == ESP_OK;
+    nvs_close(handle);
+  }
+  if (!saved) {
+    nfcLed.setActiveHigh(previous);
+    Serial.println("nfc_led: polarity could not be saved");
+  }
+  ledStatus();
 }
 
 void irStatus() {
@@ -111,11 +164,15 @@ void irStatus() {
 }
 
 void serialCommand(const char* command) {
-  if (!strcmp(command, "ir status")) irStatus();
+  if (!strcmp(command, "led status")) ledStatus();
+  else if (!strcmp(command, "led test")) nfcLed.flash();
+  else if (!strcmp(command, "led active-high")) setNfcLedPolarity(true);
+  else if (!strcmp(command, "led active-low")) setNfcLedPolarity(false);
+  else if (!strcmp(command, "ir status")) irStatus();
   else if (!strcmp(command, "ir help"))
     Serial.println("Commands: ir status | ir learn | ir cancel | ir forget | ir help");
   else if (!strcmp(command, "ir learn")) {
-    if (setupInfrared.learning() || !hardwareReady || controller.faulted() || !infrared.learn(millis())) {
+    if (setupInfrared.learning() || fobs.learning() || !hardwareReady || controller.faulted() || !infrared.learn(millis())) {
       Serial.println("ir_learning: unavailable; check storage/timer and reboot");
       return;
     }
@@ -176,6 +233,7 @@ void setup() {
   setupPortal.firmwareHealth(firmwareBoot);
   controller.boot(bootAt);
   Serial.begin(115200);
+  if (!initializeNfcLed()) Serial.println("nfc_led: unavailable");
   if (!timerReady) {
     controller.trip(millis());
     Serial.println("Relay OFF. Timer initialization failed; reboot after repair.");
@@ -185,6 +243,8 @@ void setup() {
     Serial.println("ir_storage: error; infrared disabled until storage is repaired and device is rebooted");
   if (!setupInfrared.begin(millis()))
     Serial.println("setup_ir_storage: error; repair the setup button from the setup page");
+  if (!fobs.begin())
+    Serial.println("rfid_storage: error; clear all fobs from the setup page to repair");
   if (hardwareReady) IrReceiver.begin(door::kIrPin, DISABLE_LED_FEEDBACK);
   syncInfrared();
   Serial.println("USB infrared setup ready. Use: ir help");
@@ -201,6 +261,7 @@ void setup() {
   });
   setupPortal.beforeFirmwareUpdate([]() {
     homeKey.enabled(false);
+    homeKey.fobAdmission(fobs.revision(), false);
     if (homekitStarted) HAPClient::tearDown(nullptr);
     verifiedSession = false;
     if (hardwareReady) IrReceiver.stop();
@@ -254,9 +315,7 @@ void setup() {
 }
 
 void loop() {
-  const bool nfcEnabled = hardwareReady && !controller.faulted() && !setupPortal.restarting() && !setupPortal.updating() && !setupPortal.irLearning();
-  homeKey.enabled(nfcEnabled);
-  relay.permitNfc(nfcEnabled);
+  syncNfc();
   setupPortal.nfcStatus(homeKey.configured(), homeKey.provisioned(), homeKey.connected(), homeKey.transport());
   if (!setupPortal.restarting() && !setupPortal.updating()) pollSerial();
   setupPortal.poll();
@@ -277,11 +336,12 @@ void loop() {
   if (homekitStarted) homeSpan.poll();
   if (homekitStarted) syncHomeKeyControllers(homeKeyStore);
   // A setting/learning action in this iteration revokes pending NFC results.
-  const bool nfcAllowed = hardwareReady && !controller.faulted() && !setupPortal.restarting() && !setupPortal.updating() && !setupPortal.irLearning();
-  homeKey.enabled(nfcAllowed); relay.permitNfc(nfcAllowed);
-  if (!homeKeyControllersPending && homeKey.takeVerified(millis()) && nfcAllowed) {
-    const auto result = controller.nfc(millis(), true);
-    Serial.printf("command_received: homekey; result=%s\n", door::name(result));
+  const bool nfcAllowed = syncNfc();
+  if (!homeKeyControllersPending && homeKey.takeVerified(millis()) && nfcAllowed) releaseFromNfc("homekey");
+  door::RfidUid uid;
+  if (homeKey.takeFob(millis(), uid)) {
+    if (setupPortal.receiveFob(millis(), uid) && nfcAllowed) releaseFromNfc("rfid");
+    syncInfrared();
   }
   syncConnectivity();
   controller.tick(millis());

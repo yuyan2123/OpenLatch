@@ -14,7 +14,16 @@ The firmware embeds a standalone English setup website in flash. It uses no
 external scripts, fonts, cloud service or internet connection. After the first
 USB firmware upload, routine configuration needs only a phone and power.
 
-The **RFID** tab configures Home Key failed-attempt limits (1–20) and lockout
+In **RFID**, select **Add fob** while the outdoor reader is connected. Tap the
+same fob twice within 30 seconds, removing it for at least 500 ms between taps.
+Door release pauses during learning. The indoor controller saves up to 16 fobs
+immediately, and they survive a restart. Use **Remove** for one fob or **Clear
+all fobs** for the whole list. This works before Apple Home Key is set up.
+Fobs use a fixed UID on 13.56 MHz NFC‑A tags such as MIFARE Classic and
+Ultralight. The reader does not support 125 kHz fobs for this feature. UID-based
+fobs can be copied.
+
+The **Home Key** settings configure failed-attempt limits (1–20) and lockout
 time (1–3600 seconds), defaulting to 5 attempts and 60 seconds. Select **Save and
 restart** to persist the settings. Counts and timers are volatile on the indoor
 controller; changing credentials/UID or reconnecting the outdoor reader does not

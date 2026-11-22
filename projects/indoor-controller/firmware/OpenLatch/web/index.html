@@ -139,11 +139,21 @@ dialog::backdrop{background:color-mix(in srgb,var(--color-ink) 25%,transparent)}
 </div>
 <div id="page-rfid" role="tabpanel" aria-labelledby="tab-rfid" tabindex="0" hidden>
 <section aria-labelledby="rfid-heading">
-  <h2 id="rfid-heading">RFID</h2>
-  <div class="field"><label for="nfc-max-failures">Failed attempt limit</label><input id="nfc-max-failures" name="nfc_max_failures" form="settings-form" type="number" min="1" max="20" step="1" required inputmode="numeric" aria-describedby="nfc-limit-hint" disabled><small id="nfc-limit-hint">1–20 consecutive failures.</small></div>
-  <div class="field"><label for="nfc-lockout-seconds">Lockout time (seconds)</label><input id="nfc-lockout-seconds" name="nfc_lockout_seconds" form="settings-form" type="number" min="1" max="3600" step="1" required inputmode="numeric" aria-describedby="nfc-lockout-hint" disabled><small id="nfc-lockout-hint">1–3600 seconds.</small></div>
-  <button id="save-rfid" class="save" type="submit" form="settings-form" disabled>Save and restart</button>
-  <p id="nfc-state" class="ir-message" role="status" aria-live="polite">Reading reader status…</p>
+  <h2 id="rfid-heading">RFID fobs</h2>
+  <div class="remote">
+    <p id="fob-state" class="key">Reading fob status…</p>
+    <ul id="fob-list" class="button-list" aria-label="Saved fobs"></ul>
+    <div class="actions"><button id="fob-learn" type="button" disabled>Add fob</button><button id="fob-cancel" class="secondary" type="button" disabled>Cancel learning</button></div>
+    <p id="fob-message" class="ir-message" role="status" aria-live="polite" hidden></p>
+    <button id="fob-forget" class="danger" type="button" disabled>Clear all fobs</button>
+  </div>
+  <div class="remote">
+    <h3>Home Key</h3>
+    <div class="field"><label for="nfc-max-failures">Failed attempt limit</label><input id="nfc-max-failures" name="nfc_max_failures" form="settings-form" type="number" min="1" max="20" step="1" required inputmode="numeric" aria-describedby="nfc-limit-hint" disabled><small id="nfc-limit-hint">1–20 consecutive failures.</small></div>
+    <div class="field"><label for="nfc-lockout-seconds">Lockout time (seconds)</label><input id="nfc-lockout-seconds" name="nfc_lockout_seconds" form="settings-form" type="number" min="1" max="3600" step="1" required inputmode="numeric" aria-describedby="nfc-lockout-hint" disabled><small id="nfc-lockout-hint">1–3600 seconds.</small></div>
+    <button id="save-rfid" class="save" type="submit" form="settings-form" disabled>Save and restart</button>
+    <p id="nfc-state" class="ir-message" role="status" aria-live="polite">Reading reader status…</p>
+  </div>
 </section>
 </div>
 <div id="page-other" role="tabpanel" aria-labelledby="tab-other" tabindex="0" hidden>
@@ -223,13 +233,13 @@ unsavedDialog.addEventListener("close",()=>{if(unsavedDialog.open)return;pending
 window.addEventListener("beforeunload",event=>{if(!restarting&&unsavedSettings()){event.preventDefault();event.returnValue=""}});
 function notice(message,error=false,retry=false){connectionNotice=false;byId("notice").hidden=!message;byId("notice-text").textContent=message;byId("notice").classList.toggle("error",error);byId("retry").hidden=!retry}
 function controls(){
-  const editable=initialized&&!busy&&!stopped,ready=editable&&!connectionFailed,learning=Boolean(lastState&&(lastState.ir_learning||lastState.setup_ir_learning));
+  const editable=initialized&&!busy&&!stopped,ready=editable&&!connectionFailed,learning=Boolean(lastState&&(lastState.ir_learning||lastState.setup_ir_learning||lastState.fob_learning));
   document.querySelectorAll("#settings-form input").forEach(element=>element.disabled=!editable);
   byId("relay-pulse").disabled=!editable;
   byId("current-password").disabled=!editable;byId("password-required").disabled=!editable;
   byId("nfc-max-failures").disabled=!editable;byId("nfc-lockout-seconds").disabled=!editable;
   byId("wifi-password").disabled=!editable||byId("open-network").checked;
-  byId("save").disabled=!ready||learning;byId("save-hint").textContent=learning?"Finish or cancel button learning before saving.":"Changes take effect after restart.";
+  byId("save").disabled=!ready||learning;byId("save-hint").textContent=learning?"Finish or cancel learning before saving.":"Changes take effect after restart.";
   byId("save-other").disabled=byId("save").disabled;
   byId("save-rfid").disabled=byId("save").disabled;
   const otaReady=ready&&Boolean(lastState&&lastState.ota_supported);
@@ -241,6 +251,9 @@ function controls(){
   byId("setup-learn").disabled=!ready||learning||!lastState||!lastState.hardware_ready||!lastState.setup_ir_ready||lastState.setup_ir_count>=lastState.setup_ir_capacity;
   byId("setup-cancel").disabled=!ready||!lastState||!lastState.setup_ir_learning;
   byId("setup-forget").disabled=!ready||learning||Boolean(lastState&&lastState.setup_ir_ready&&!lastState.setup_ir_count);
+  byId("fob-learn").disabled=!ready||learning||!lastState?.hardware_ready||!lastState.fob_ready||!lastState.nfc_connected||lastState.fob_count>=lastState.fob_capacity;
+  byId("fob-cancel").disabled=!ready||!lastState?.fob_learning;
+  byId("fob-forget").disabled=!ready||learning||(!lastState?.fob_count&&lastState?.fob_ready!==false);
   document.querySelectorAll("[data-remove-group]").forEach(button=>button.disabled=!ready||learning);
   byId("unsaved-save").disabled=byId("save").disabled;
   for(const name of pageNames)byId("tab-"+name).disabled=busy;
@@ -291,18 +304,24 @@ function keyText(state,prefix,empty){
   if(!count)return empty;
   return count+" of "+capacity+" buttons saved"+(count>=capacity?". List full; remove a button to add another.":"");
 }
-function renderButtons(state,prefix,listId,group){
-  const list=byId(listId),buttons=state[prefix+"buttons"],signature=JSON.stringify(buttons);
+function renderButtons(buttons,listId,group){
+  const list=byId(listId),signature=JSON.stringify(buttons);
   if(list.dataset.signature===signature)return;
   list.dataset.signature=signature;list.replaceChildren();
   for(const saved of buttons){
-    const row=document.createElement("li"),info=document.createElement("div"),label=document.createElement("span"),code=document.createElement("code"),remove=document.createElement("button");
-    label.textContent="Button "+(saved.id+1);
-    code.textContent=saved.protocol+" / "+saved.address.toString(16).toUpperCase()+" / "+saved.command.toString(16).toUpperCase()+" ("+saved.bits+" bits)";
+    const row=document.createElement("li"),info=document.createElement("div"),label=document.createElement("span"),remove=document.createElement("button");
+    const fob=group==="fob";
+    label.textContent=(fob?"Fob ":"Button ")+(saved.id+1);
+    info.append(label);
+    if(!fob){
+      const code=document.createElement("code");
+      code.textContent=saved.protocol+" / "+saved.address.toString(16).toUpperCase()+" / "+saved.command.toString(16).toUpperCase()+" ("+saved.bits+" bits)";
+      info.append(code);
+    }
     remove.type="button";remove.className="secondary";remove.textContent="Remove";
-    remove.setAttribute("aria-label","Remove "+group+" button "+(saved.id+1));
+    remove.setAttribute("aria-label","Remove "+(fob?"fob":group+" button")+" "+(saved.id+1));
     remove.dataset.removeGroup=group;remove.dataset.id=saved.id;remove.dataset.key=saved.key;
-    info.append(label,code);row.append(info,remove);list.append(row);
+    row.append(info,remove);list.append(row);
   }
 }
 function render(state){
@@ -319,6 +338,10 @@ function render(state){
   if(!firmwareNotice)firmwareMessage(state.ota_supported?"Door release pauses during the update.":"Install the OTA firmware over USB first.",false,false);
   const readerConnection=state.nfc_transport==="wifi"?"Reader connected via Wi-Fi.":state.nfc_transport==="esp-now"?"Reader connected via ESP-NOW.":"Reader connected.";
   byId("nfc-state").textContent=state.nfc_lockout_remaining_ms>0?"Home Key paused. "+Math.ceil(state.nfc_lockout_remaining_ms/1000)+" seconds remaining.":!state.nfc_configured?"Reader connection is not configured.":!state.nfc_provisioned?"Set up Home Key in Apple Home.":!state.nfc_connected?"Waiting for the outdoor reader.":(state.nfc_failures??0)+" failed attempts. "+readerConnection;
+  byId("fob-state").textContent=(state.fob_count??0)+" of "+(state.fob_capacity??16)+" fobs saved";
+  const fobMessage=state.fob_ready===false?"Fob storage failed. Use Clear all fobs to repair.":!state.nfc_connected&&!state.fob_learning?"Waiting for the outdoor reader.":state.fob_event??"";
+  byId("fob-message").hidden=!fobMessage;
+  if(byId("fob-message").textContent!==fobMessage)byId("fob-message").textContent=fobMessage;
   byId("network").textContent=state.connected?"Connected to "+state.ssid:"Setup hotspot: "+state.ap_name;
   byId("address").textContent=state.ip;
   syncCountdown(state,renewed);
@@ -326,7 +349,8 @@ function render(state){
   byId("default-password").hidden=!state.default_password;
   byId("ir-state").textContent=keyText(state,"ir_","No active unlock button");
   byId("setup-ir-state").textContent=keyText(state,"setup_ir_","No setup button saved");
-  renderButtons(state,"ir_","ir-buttons","door");renderButtons(state,"setup_ir_","setup-ir-buttons","setup");
+  renderButtons(state.ir_buttons,"ir-buttons","door");renderButtons(state.setup_ir_buttons,"setup-ir-buttons","setup");
+  renderButtons(state.fobs??[],"fob-list","fob");
   byId("ir-message").textContent=state.ir_event;byId("setup-ir-message").textContent=state.setup_ir_event;
   byId("hostname").textContent="Local address: http://"+state.hostname+"/";
   if(!state.hardware_ready)notice("Relay timer fault. Door release is disabled; check the hardware and restart.",true);
@@ -440,22 +464,26 @@ async function buttonAction(button,path,body=""){
   catch(error){reportError(error);if(!stopped&&!connectionFailed)try{render(await request("/api/status"))}catch(statusError){reportError(statusError)}}
   finally{busy=false;button.removeAttribute("aria-busy");controls();scheduleRefresh(connectionFailed?1000:2000)}
 }
-for(const [prefix,route] of [["","/api/ir/"],["setup-","/api/setup-ir/"]])for(const action of ["learn","cancel","forget"]){
+for(const [prefix,route,clearPrompt] of [
+  ["","/api/ir/","Clear all door buttons? Infrared door release will be disabled."],
+  ["setup-","/api/setup-ir/","Clear all setup buttons? Use the boot window to add new buttons if setup access closes."],
+  ["fob-","/api/rfid/","Clear all fobs?"]
+])for(const action of ["learn","cancel","forget"]){
   const button=byId(prefix+action);
   button.addEventListener("click",async()=>{
     if(busy||stopped||!initialized)return;
-    if(action==="forget"&&!confirm(prefix?"Clear all setup buttons? Use the boot window to add new buttons if setup access closes.":"Clear all door buttons? Infrared door release will be disabled."))return;
+    if(action==="forget"&&!confirm(clearPrompt))return;
     await buttonAction(button,route+action);
   });
 }
-for(const id of ["ir-buttons","setup-ir-buttons"])byId(id).addEventListener("click",async event=>{
+for(const [id,route,learnId] of [["ir-buttons","/api/ir/remove","learn"],["setup-ir-buttons","/api/setup-ir/remove","setup-learn"],["fob-list","/api/rfid/remove","fob-learn"]])byId(id).addEventListener("click",async event=>{
   const button=event.target.closest("[data-remove-group]");
   if(!button||button.disabled||busy||stopped||!initialized)return;
   const group=button.dataset.removeGroup;
-  if(!confirm("Remove "+group+" button "+(Number(button.dataset.id)+1)+"? Other saved buttons will be retained."))return;
+  if(!confirm("Remove "+(group==="fob"?"fob":group+" button")+" "+(Number(button.dataset.id)+1)+"?"))return;
   const body=new URLSearchParams({id:button.dataset.id,key:button.dataset.key});
-  await buttonAction(button,group==="door"?"/api/ir/remove":"/api/setup-ir/remove",body.toString());
-  if(!button.isConnected){const next=byId(id).querySelector("button")||byId(group==="door"?"learn":"setup-learn");next.focus({preventScroll:true})}
+  await buttonAction(button,route,body.toString());
+  if(!button.isConnected){const next=byId(id).querySelector("button")||byId(learnId);next.focus({preventScroll:true})}
 });
 setInterval(updateCountdown,200);
 refresh();
