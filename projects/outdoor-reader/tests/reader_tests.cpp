@@ -1,6 +1,7 @@
 #include "Protocol.h"
 #include "ChannelScan.h"
 #include "ReaderSession.h"
+#include "HomeKeySelectReader.h"
 #include "Ecp.h"
 #include "PnResponse.h"
 #include <cstdlib>
@@ -293,4 +294,46 @@ void rfErrorRequiresRemoval() {
   CHECK(f.session.detected(1649, uid, sizeof uid, {}, 0x20));
 
 }
-int main() { cryptoAndWire(); pairingAndRetries(); faultsAndHardDeadline(); channelScanning(); rfErrorRequiresRemoval(); }
+void earlySelectIsScopedToOneTap() {
+  struct Probe final : HomeKeySelectReader {
+    FakeReader device;
+    bool configure(const std::array<uint8_t,8>& group) override { return device.configure(group); }
+    void release() override {}
+    ExchangeResult transceive(const uint8_t* cmd, size_t len, uint8_t* out, size_t& size) override {
+      return device.exchange(cmd, len, out, size);
+    }
+  } reader;
+  Sink sink;
+  ReaderSession session(reader, sink);
+  session.begin(0);
+  Frame config;
+  config.type = Type::Configure; config.seq = 1; config.outdoor = session.nonce();
+  config.indoor[0] = 1; config.length = 8;
+  session.receive(0, config);
+  session.presence(0, false); session.presence(500, false);
+  uint8_t uid = 1;
+  CHECK(session.detected(500, &uid, 1, {}, 0x20));
+  CHECK(reader.device.exchanges == 1);
+  Frame cmd = config;
+  cmd.type = Type::Exchange; cmd.seq = 2; cmd.tap = sink.sent.back().tap; cmd.request = 1;
+  cmd.length = reader.select.size();
+  std::copy(reader.select.begin(), reader.select.end(), cmd.payload.begin());
+  session.receive(510, cmd); session.receive(520, cmd);
+  CHECK(reader.device.exchanges == 1 && sink.sent.back().length == 2 && sink.sent.back().payload[0] == 0x90);
+  ++cmd.seq; ++cmd.request; cmd.payload[1] = 0x80;
+  session.receive(530, cmd);
+  CHECK(reader.device.exchanges == 2 && reader.device.command[1] == 0x80);
+
+  uint8_t response[2]{};
+  size_t size = sizeof(response);
+  reader.device.exchangeResult = ExchangeResult::RetryableRfError;
+  reader.startTap(true);
+  CHECK(reader.exchange(reader.select.data(), reader.select.size(), response, size) == ExchangeResult::RetryableRfError);
+  CHECK(reader.device.exchanges == 3);
+  reader.device.exchangeResult = ExchangeResult::Ok;
+  reader.startTap(true);
+  reader.startTap(false);
+  CHECK(reader.exchange(reader.select.data(), reader.select.size(), response, size) == ExchangeResult::Ok);
+  CHECK(reader.device.exchanges == 5);
+}
+int main() { cryptoAndWire(); pairingAndRetries(); faultsAndHardDeadline(); channelScanning(); rfErrorRequiresRemoval(); earlySelectIsScopedToOneTap(); }

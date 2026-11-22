@@ -12,7 +12,7 @@ set(EXTRA_COMPONENT_DIRS
     "${VENDOR}/pn532_hal"
     "${VENDOR}/loggable")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-set(PROJECT_VER "1.5.0")
+set(PROJECT_VER "1.5.1")
 project(OpenLatchOutdoor VERSION ${PROJECT_VER})
 
 # Upstream's quoted -DFMT_THROW macro is not preserved by PlatformIO/SCons on

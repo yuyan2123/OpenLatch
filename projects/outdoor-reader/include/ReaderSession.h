@@ -11,6 +11,7 @@ struct Reader {
   virtual bool configure(const std::array<uint8_t, 8>& group) = 0;
   virtual ExchangeResult exchange(const uint8_t* command, size_t length, uint8_t* response, size_t& size) = 0;
   virtual void release() = 0;
+  virtual void startTap(bool) {}
   virtual void endTap(bool) { release(); }
 };
 struct Output {
@@ -77,6 +78,7 @@ class ReaderSession {
     std::copy_n(uid, length, tag_.payload.begin() + 1);
     tag_.payload[length + 1] = atqa[0]; tag_.payload[length + 2] = atqa[1];
     tag_.payload[length + 3] = sak;
+    reader_.startTap((sak & kIsoDep) != 0);
     if (tag_.seq) output_.send(tag_);
     return true;
   }

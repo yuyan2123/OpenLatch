@@ -38,7 +38,14 @@ bool PnReader::configure(const std::array<uint8_t, 8>& group) {
   ESP_LOGI("PN532", "Reader ready");
   return true;
 }
-ExchangeResult PnReader::exchange(const uint8_t* command, size_t length, uint8_t* response, size_t& size) {
+void PnReader::startTap(bool isoDep) {
+  const uint32_t start = clockMs();
+  HomeKeySelectReader::startTap(isoDep);
+  if (isoDep) ESP_LOGI("PN532", "Local SELECT: detection_to_start_ms=%lu exchange_ms=%lu",
+                      static_cast<unsigned long>(start - detectedAt_),
+                      static_cast<unsigned long>(clockMs() - start));
+}
+ExchangeResult PnReader::transceive(const uint8_t* command, size_t length, uint8_t* response, size_t& size) {
   if (!ready_ || !command || length < 4 || length > kMaxCommand) return ExchangeResult::Failed;
   std::vector<uint8_t> result;
   const auto status = frontend_->InDataExchange(pn532::span<const uint8_t>(command, length), result, 500);
@@ -95,7 +102,10 @@ std::optional<bool> PnReader::poll(std::vector<uint8_t>& uid, std::array<uint8_t
   ecpErrorReported_ = false;
   uid.clear();
   const auto status = frontend_->InListPassiveTarget(0x00, uid, atqa, sak, 50);
-  if (status == Status::SUCCESS) return true;
+  if (status == Status::SUCCESS) {
+    detectedAt_ = clockMs();
+    return true;
+  }
   if (status == Status::NO_TAGS_FOUND) return false;
   return std::nullopt;
 }

@@ -52,7 +52,7 @@ Response code=3 表示 PN532 交換失敗，payload 為空，tap 已結束。其
    每次 NFC-A 輪詢前都先送 Home Key ECP，包含等待移卡的探測。ECP 傳送失敗時略過該次探測。
 3. 門內閒置時每 250 ms 送 Ping。租約 5 秒，只有新的有效請求續時，重送不續時。
 4. 偵測到卡片後送 Tag；第一個 Exchange／Release 前，每 150 ms 原樣重送。若 1500 ms 仍無第一個指令，門外丟棄該次感應並更換 nonce，重新探索門內。重連後須移開再感應。
-5. 門內產生 C-APDU，門外轉送並回傳完整 R-APDU；每次只允許一個未完成的 Exchange。
+5. 門外 1.5.1 會先對新 ISO-DEP 目標執行固定的 Home Key SELECT，暫存該次結果。門內第一個請求完全相同時，門外回傳這份結果；射頻失敗也只回報一次，不重新選取。後續由門內產生 C-APDU，門外轉送並回傳完整 R-APDU；每次只允許一個未完成的 Exchange。
 6. 門內完成／取消驗證後送 Release。只有門內驗證成功能觸發開門，每個 session 最多一次。
 
 PN532 APDU 交換逾時 500 ms。門內可先等 800 ms，再原樣重送同一 Exchange，最多重試 1 次；仍失敗則取消當次驗證。整次 tap 最長 5 秒，新 Exchange 間閒置最長 1500 ms。這些時序仍需手機／讀取器實測。等待 Exchange 時不要插入 Ping，以免覆蓋單筆快取。

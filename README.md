@@ -6,7 +6,7 @@
 
 OpenLatch 以 ESP32-C3 驅動繼電器，輸出短暫的開門脈衝。用手機瀏覽器即可設定 Wi-Fi、學習遙控器按鍵與更新韌體；Apple Home Key 則透過門外的 ESP-32S＋PN532 轉送感應交握，由門內控制器驗證憑證。
 
-目前原始碼為 **`1.5.0`**，門內與門外共用此發行版號。雙板最近一次 USB 燒錄為 2026-11-23 的 `1.5.0`，進度見下方[目前狀態](#目前狀態)。
+門內韌體為 **`1.5.0`**，門外韌體為 **`1.5.1`**。兩板均已經 USB 燒錄對應版本，進度見下方[目前狀態](#目前狀態)。
 
 <p align="center">
   <a href="docs/screenshots/setup-wifi.png"><img src="docs/screenshots/setup-wifi.png" width="32%" alt="手機設定頁：Wi-Fi 連線與設定熱點密碼" /></a>
